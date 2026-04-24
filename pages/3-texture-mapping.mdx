@@ -111,6 +111,10 @@ A checker texture alternates between two textures based on the sign of a trig fu
 
 Here is a scene with two large spheres using the checker texture — one on the floor and one in the air. The checker pattern tiles through all 3D space, so both spheres show the same tiling.
 
+<Img src="img-2.02-checker-ground.png" caption="Spheres on checkered ground" />
+
+<Img src="img-2.03-checker-spheres.png" caption="Checkered spheres" />
+
 ## Texture Coordinates for Spheres
 
 For image textures we need UV coordinates — a 2D parameterization of the surface. For a sphere we use the standard spherical mapping: `u` runs 0–1 around the equator and `v` runs 0–1from south pole to north pole.
@@ -208,3 +212,7 @@ For image textures we load an image file (e.g., a JPEG) and sample it at UV coor
 ## Rendering The Image Texture
 
 By mapping an earth image onto a sphere using our UV coordinates, we can render a globe. The earth texture is applied so the equator aligns with the sphere's equator.
+
+<Img src="earthmap.jpg" caption="The earth texture image" />
+
+<Img src="img-2.05-earth-sphere.png" caption="Earth-mapped sphere" />

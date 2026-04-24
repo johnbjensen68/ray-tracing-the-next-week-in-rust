@@ -206,3 +206,5 @@ The `hit` function for a moving sphere uses `ray.time()` to compute the sphere's
 With moving spheres and a camera that generates rays with random times, we can render a scene with motion blur. The resulting image captures the sense of movement: each moving sphere appears smeared in the direction of its motion.
 
 The key insight is that we don't change our integration loop at all — we just evaluate color at a random time for each sample, and averaging handles the rest.
+
+<Img src="img-2.01-bouncing-spheres.png" caption="Bouncing spheres" />

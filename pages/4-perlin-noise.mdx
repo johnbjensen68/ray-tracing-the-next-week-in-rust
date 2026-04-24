@@ -2,6 +2,10 @@
 
 Perlin noise is a foundational technique for procedural textures. It produces a smooth, pseudorandom signal that looks natural — great for terrain, marble, and other organic appearances.
 
+<Img src="img-2.06-white-noise.jpg" caption="White noise" />
+
+<Img src="img-2.07-white-noise-blurred.jpg" caption="White noise, blurred" />
+
 ## Using Blocks of Random Numbers
 
 The simplest version hashes the integer coordinates of a point to look up a random float. We precompute an array of random floats and use a hash to select from it.
@@ -77,6 +81,10 @@ The simplest version hashes the integer coordinates of a point to look up a rand
   </Tab>
 </Tabs>
 
+<Img src="img-2.08-tile-random.jpg" caption="Tiled random patterns" />
+
+<Img src="img-2.09-hash-random.png" caption="Hashed random texture" />
+
 ## Smoothing out the Result
 
 Using floor-indexed lookups produces a blocky result. We apply trilinear interpolation between the eight surrounding lattice points to smooth it out.
@@ -130,6 +138,8 @@ Using floor-indexed lookups produces a blocky result. We apply trilinear interpo
   </Tab>
 </Tabs>
 
+<Img src="img-2.10-perlin-trilerp.png" caption="Perlin texture with trilinear interpolation" />
+
 ## Improvement with Hermitian Smoothing
 
 Simple linear interpolation shows Mach-band artifacts (stripes) where the interpolant's derivative is discontinuous. We apply a Hermite cubic `s = 3u² - 2u³` to each fractional coordinate before interpolating — this gives a smooth result with continuous first derivatives.
@@ -152,9 +162,13 @@ Simple linear interpolation shows Mach-band artifacts (stripes) where the interp
   </Tab>
 </Tabs>
 
+<Img src="img-2.11-perlin-trilerp-smooth.png" caption="Perlin texture, trilinearly interpolated, smoothed" />
+
 ## Tweaking The Frequency
 
 We can scale the input point to control the frequency of the noise. Multiplying the point by a scale factor makes the features smaller and more frequent.
+
+<Img src="img-2.12-perlin-hifreq.png" caption="Perlin texture, higher frequency" />
 
 ## Using Random Vectors on the Lattice Points
 
@@ -213,6 +227,8 @@ Instead of random scalars, we place random unit vectors at each lattice point. T
   </Tab>
 </Tabs>
 
+<Img src="img-2.13-perlin-shift.png" caption="Perlin texture, shifted off integer values" />
+
 ## Introducing Turbulence
 
 Turbulence sums multiple frequencies of noise (octaves) with decreasing amplitudes. This produces a more complex, fractal-like signal.
@@ -251,6 +267,8 @@ Turbulence sums multiple frequencies of noise (octaves) with decreasing amplitud
   </Tab>
 </Tabs>
 
+<Img src="img-2.14-perlin-turb.png" caption="Perlin texture with turbulence" />
+
 ## Adjusting the Phase
 
 Using turbulence directly gives a camouflage-like look. To get the classic marble appearance, we use it to perturb a phase in a sine function:
@@ -273,3 +291,5 @@ Using turbulence directly gives a camouflage-like look. To get the classic marbl
     ```
   </Tab>
 </Tabs>
+
+<Img src="img-2.15-perlin-marble.png" caption="Perlin noise, marbled texture" />
