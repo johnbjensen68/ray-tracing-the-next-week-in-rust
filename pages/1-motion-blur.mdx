@@ -59,98 +59,92 @@ We need to track time in our ray type. We'll add a field to store the time at wh
 
 ## Updating the Camera to Simulate Motion Blur
 
-The camera needs to generate rays at random times within its shutter interval. We add `shutter_open` and `shutter_close` times to the camera, and when generating a ray we pick a random time in that range.
+The camera needs to generate rays at random times. We simply pick a random time in [0,1] for each ray — no explicit shutter interval needed. The `get_ray` function is where time is assigned.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="camera.rs | Camera with shutter interval"
-    pub struct Camera {
-        // ... existing fields ...
-        pub shutter_open: f64,
-        pub shutter_close: f64,
-    }
-
-    impl Camera {
-        pub fn get_ray(&self, s: f64, t: f64) -> Ray {
-            let rd = self.lens_radius * Vec3::random_in_unit_disk();
-            let offset = self.u * rd.x() + self.v * rd.y();
-            let time = self.shutter_open
-                + random_double() * (self.shutter_close - self.shutter_open);
-            Ray::new(
-                self.origin + offset,
-                self.lower_left_corner + s * self.horizontal + t * self.vertical
-                    - self.origin
-                    - offset,
-                time,
-            )
-        }
+    ```rust filename="camera.rs | Camera generating rays with random time"
+    fn get_ray(&self, i: u32, j: u32) -> Ray {
+        let offset = Camera::sample_square();
+        let pixel_sample = self.pixel00_loc
+            + ((i as f64 + offset.x()) * self.pixel_delta_u)
+            + ((j as f64 + offset.y()) * self.pixel_delta_v);
+        let ray_origin = if self.defocus_angle <= 0.0 {
+            self.center
+        } else {
+            self.defocus_disk_sample()
+        };
+        let ray_direction = pixel_sample - ray_origin;
+        let ray_time = random_double();
+        Ray::new(ray_origin, ray_direction, ray_time)
     }
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="camera.h | Camera with shutter interval"
-    class camera {
-      public:
-        // ... constructor with open/close times ...
-        ray get_ray(double s, double t) const {
-            vec3 rd = lens_radius * random_in_unit_disk();
-            vec3 offset = u * rd.x() + v * rd.y();
-            return ray(
-                origin + offset,
-                lower_left_corner + s*horizontal + t*vertical - origin - offset,
-                random_double(shutter_open, shutter_close)
-            );
-        }
-      private:
-        double shutter_open, shutter_close;
-    };
+    ```cpp filename="camera.h | Camera generating rays with random time"
+    ray get_ray(int i, int j) const {
+        auto offset = sample_square();
+        auto pixel_sample = pixel00_loc
+                          + ((i + offset.x()) * pixel_delta_u)
+                          + ((j + offset.y()) * pixel_delta_v);
+        auto ray_origin    = (defocus_angle <= 0) ? center : defocus_disk_sample();
+        auto ray_direction = pixel_sample - ray_origin;
+        auto ray_time      = random_double();
+
+        return ray(ray_origin, ray_direction, ray_time);
+    }
     ```
   </Tab>
 </Tabs>
 
 ## Adding Moving Spheres
 
-We create a `MovingSphere` that linearly interpolates its center position between `center0` at `time0` and `center1` at `time1`. At a given ray time, we compute where the sphere's center is and perform the usual intersection math.
+Rather than a separate `MovingSphere` class, we extend the existing `sphere` class. A moving sphere is simply one whose center is a ray — the center at time `t` is `center.at(t)`. A stationary sphere has a center ray with zero direction.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="moving_sphere.rs | MovingSphere"
-    pub struct MovingSphere {
-        pub center0: Point3,
-        pub center1: Point3,
-        pub time0: f64,
-        pub time1: f64,
-        pub radius: f64,
-        pub material: Arc<dyn Material>,
+    ```rust filename="sphere.rs | Sphere with optional motion"
+    pub struct Sphere {
+        center: Ray,   // center.at(t) gives position at time t
+        radius: f64,
+        mat: Arc<dyn Material>,
     }
 
-    impl MovingSphere {
-        pub fn center(&self, time: f64) -> Point3 {
-            self.center0
-                + ((time - self.time0) / (self.time1 - self.time0))
-                    * (self.center1 - self.center0)
+    impl Sphere {
+        // Stationary sphere
+        pub fn new(center: Point3, radius: f64, mat: Arc<dyn Material>) -> Self {
+            Self { center: Ray::new(center, Vec3::ZERO, 0.0), radius: radius.max(0.0), mat }
+        }
+        // Moving sphere
+        pub fn new_moving(
+            center1: Point3, center2: Point3, radius: f64, mat: Arc<dyn Material>
+        ) -> Self {
+            Self {
+                center: Ray::new(center1, center2 - center1, 0.0),
+                radius: radius.max(0.0),
+                mat,
+            }
         }
     }
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="moving_sphere.h | moving_sphere class"
-    class moving_sphere : public hittable {
+    ```cpp filename="sphere.h | sphere with optional motion"
+    class sphere : public hittable {
       public:
-        moving_sphere(
-            point3 cen0, point3 cen1, double time0, double time1,
-            double r, shared_ptr<material> m)
-          : center0(cen0), center1(cen1), time0(time0), time1(time1),
-            radius(r), mat(m) {}
+        // Stationary sphere
+        sphere(const point3& static_center, double radius, shared_ptr<material> mat)
+          : center(static_center, vec3(0,0,0)), radius(std::fmax(0,radius)), mat(mat) {}
 
-        point3 center(double time) const {
-            return center0 + ((time - time0) / (time1 - time0)) * (center1 - center0);
-        }
+        // Moving sphere
+        sphere(const point3& center1, const point3& center2, double radius,
+               shared_ptr<material> mat)
+          : center(center1, center2 - center1), radius(std::fmax(0,radius)), mat(mat) {}
+
       private:
-        point3 center0, center1;
-        double time0, time1;
+        ray center;
         double radius;
         shared_ptr<material> mat;
     };
@@ -160,15 +154,15 @@ We create a `MovingSphere` that linearly interpolates its center position betwee
 
 ## Tracking the Time of Ray Intersection
 
-The `hit` function for a moving sphere uses `ray.time()` to compute the sphere's center at the moment of intersection. The rest of the math stays the same as for a stationary sphere.
+The `hit` function evaluates the sphere's center at the ray's time using `center.at(r.time())`. For a stationary sphere the direction is zero so `center.at(t)` is always the same point.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="moving_sphere.rs | hit implementation"
-    impl Hittable for MovingSphere {
+    ```rust filename="sphere.rs | hit using center ray"
+    impl Hittable for Sphere {
         fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
-            let center = self.center(r.time);
-            let oc = r.origin - center;
+            let current_center = self.center.at(r.time);
+            let oc = r.origin - current_center;
             let a = r.direction.length_squared();
             let half_b = oc.dot(r.direction);
             let c = oc.length_squared() - self.radius * self.radius;
@@ -177,6 +171,9 @@ The `hit` function for a moving sphere uses `ray.time()` to compute the sphere's
                 return false;
             }
             // ... rest of hit logic ...
+            let outward_normal = (rec.p - current_center) / self.radius;
+            rec.set_face_normal(r, outward_normal);
+            rec.mat = self.mat.clone();
             true
         }
     }
@@ -184,18 +181,20 @@ The `hit` function for a moving sphere uses `ray.time()` to compute the sphere's
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="moving_sphere.h | hit function"
-    bool moving_sphere::hit(
-        const ray& r, interval ray_t, hit_record& rec) const
-    {
-        point3 center = this->center(r.time());
-        vec3 oc = r.origin() - center;
-        auto a = r.direction().length_squared();
-        auto half_b = dot(oc, r.direction());
-        auto c = oc.length_squared() - radius*radius;
-        auto discriminant = half_b*half_b - a*c;
+    ```cpp filename="sphere.h | hit using center ray"
+    bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
+        point3 current_center = center.at(r.time());
+        vec3 oc = current_center - r.origin();
+        auto a  = r.direction().length_squared();
+        auto h  = dot(oc, r.direction());
+        auto c  = oc.length_squared() - radius*radius;
+        auto discriminant = h*h - a*c;
         if (discriminant < 0) return false;
         // ... rest of hit logic ...
+        vec3 outward_normal = (rec.p - current_center) / radius;
+        rec.set_face_normal(r, outward_normal);
+        rec.mat = mat;
+        return true;
     }
     ```
   </Tab>

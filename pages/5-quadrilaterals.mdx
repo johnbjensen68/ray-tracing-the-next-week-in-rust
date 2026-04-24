@@ -45,6 +45,19 @@ We introduce a second geometric primitive: the parallelogram (which we'll call a
             w = n / dot(n, n);
             set_bounding_box();
         }
+
+        virtual void set_bounding_box() {
+            auto bbox_diagonal1 = aabb(Q, Q + u + v);
+            auto bbox_diagonal2 = aabb(Q + u, Q + v);
+            bbox = aabb(bbox_diagonal1, bbox_diagonal2);
+        }
+
+        aabb bounding_box() const override { return bbox; }
+
+        bool hit(const ray& r, interval ray_t, hit_record& rec) const override;
+
+        virtual bool is_interior(double a, double b, hit_record& rec) const;
+
       private:
         point3 Q;
         vec3 u, v;
@@ -172,3 +185,55 @@ The hit point is inside the parallelogram if and only if both `alpha` and `beta`
 ## Additional 2D Primitives
 
 The same framework can accommodate other 2D shapes: triangles (test that `alpha + beta <= 1`) and disks (test that the point is within a unit circle). You can subclass `Quad` and override `is_interior` for these variants.
+
+## A Box of Quads
+
+Using six quads we can build an axis-aligned box. The `make_box` helper creates a `hittable_list` of the six face quads given two opposite corners.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="quad.rs | make_box"
+    pub fn make_box(a: Point3, b: Point3, mat: Arc<dyn Material>) -> Arc<dyn Hittable> {
+        let mut sides = HittableList::new();
+        let min = Point3::new(a.x().min(b.x()), a.y().min(b.y()), a.z().min(b.z()));
+        let max = Point3::new(a.x().max(b.x()), a.y().max(b.y()), a.z().max(b.z()));
+        let dx = Vec3::new(max.x() - min.x(), 0.0, 0.0);
+        let dy = Vec3::new(0.0, max.y() - min.y(), 0.0);
+        let dz = Vec3::new(0.0, 0.0, max.z() - min.z());
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), max.z()),  dx,  dy, mat.clone())));
+        sides.add(Arc::new(Quad::new(Point3::new(max.x(), min.y(), max.z()), -dz,  dy, mat.clone())));
+        sides.add(Arc::new(Quad::new(Point3::new(max.x(), min.y(), min.z()), -dx,  dy, mat.clone())));
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dz,  dy, mat.clone())));
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), max.y(), max.z()),  dx, -dz, mat.clone())));
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dx,  dz, mat.clone())));
+        Arc::new(sides)
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="quad.h | box"
+    inline shared_ptr<hittable_list> box(
+        const point3& a, const point3& b, shared_ptr<material> mat
+    ) {
+        auto sides = make_shared<hittable_list>();
+
+        auto min = point3(std::fmin(a.x(),b.x()), std::fmin(a.y(),b.y()), std::fmin(a.z(),b.z()));
+        auto max = point3(std::fmax(a.x(),b.x()), std::fmax(a.y(),b.y()), std::fmax(a.z(),b.z()));
+
+        auto dx = vec3(max.x() - min.x(), 0, 0);
+        auto dy = vec3(0, max.y() - min.y(), 0);
+        auto dz = vec3(0, 0, max.z() - min.z());
+
+        sides->add(make_shared<quad>(point3(min.x(), min.y(), max.z()),  dx,  dy, mat)); // front
+        sides->add(make_shared<quad>(point3(max.x(), min.y(), max.z()), -dz,  dy, mat)); // right
+        sides->add(make_shared<quad>(point3(max.x(), min.y(), min.z()), -dx,  dy, mat)); // back
+        sides->add(make_shared<quad>(point3(min.x(), min.y(), min.z()),  dz,  dy, mat)); // left
+        sides->add(make_shared<quad>(point3(min.x(), max.y(), max.z()),  dx, -dz, mat)); // top
+        sides->add(make_shared<quad>(point3(min.x(), min.y(), min.z()),  dx,  dz, mat)); // bottom
+
+        return sides;
+    }
+    ```
+  </Tab>
+</Tabs>

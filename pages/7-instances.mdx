@@ -88,37 +88,59 @@ Rotation is more involved. We rotate the ray by the negative angle, test interse
             let radians = angle.to_radians();
             let sin_theta = radians.sin();
             let cos_theta = radians.cos();
-            let bbox = Self::rotate_bbox(object.bounding_box(), sin_theta, cos_theta);
+            let src_bbox = object.bounding_box();
+
+            let mut min = Point3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+            let mut max = Point3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+
+            for i in 0..2 {
+                for j in 0..2 {
+                    for k in 0..2 {
+                        let x = i as f64 * src_bbox.x.max + (1 - i) as f64 * src_bbox.x.min;
+                        let y = j as f64 * src_bbox.y.max + (1 - j) as f64 * src_bbox.y.min;
+                        let z = k as f64 * src_bbox.z.max + (1 - k) as f64 * src_bbox.z.min;
+                        let newx =  cos_theta * x + sin_theta * z;
+                        let newz = -sin_theta * x + cos_theta * z;
+                        let tester = Vec3::new(newx, y, newz);
+                        for c in 0..3 {
+                            min[c] = min[c].min(tester[c]);
+                            max[c] = max[c].max(tester[c]);
+                        }
+                    }
+                }
+            }
+
+            let bbox = Aabb::from_points(min, max);
             Self { object, sin_theta, cos_theta, bbox }
         }
 
         fn rotate_point(p: Point3, sin_theta: f64, cos_theta: f64) -> Point3 {
             Point3::new(
-                cos_theta * p.x() - sin_theta * p.z(),
+                cos_theta * p.x() + sin_theta * p.z(),
                 p.y(),
-                sin_theta * p.x() + cos_theta * p.z(),
+                -sin_theta * p.x() + cos_theta * p.z(),
             )
         }
     }
 
     impl Hittable for RotateY {
         fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
-            // Rotate ray into object space (negative rotation)
+            // Transform the ray from world space to object space.
             let origin = Point3::new(
-                self.cos_theta * r.origin.x() + self.sin_theta * r.origin.z(),
+                self.cos_theta * r.origin.x() - self.sin_theta * r.origin.z(),
                 r.origin.y(),
-                -self.sin_theta * r.origin.x() + self.cos_theta * r.origin.z(),
+                self.sin_theta * r.origin.x() + self.cos_theta * r.origin.z(),
             );
             let direction = Vec3::new(
-                self.cos_theta * r.direction.x() + self.sin_theta * r.direction.z(),
+                self.cos_theta * r.direction.x() - self.sin_theta * r.direction.z(),
                 r.direction.y(),
-                -self.sin_theta * r.direction.x() + self.cos_theta * r.direction.z(),
+                self.sin_theta * r.direction.x() + self.cos_theta * r.direction.z(),
             );
             let rotated_r = Ray::new(origin, direction, r.time);
             if !self.object.hit(&rotated_r, ray_t, rec) {
                 return false;
             }
-            // Rotate hit point and normal back into world space
+            // Transform the intersection from object space back to world space.
             rec.p = Self::rotate_point(rec.p, self.sin_theta, self.cos_theta);
             rec.normal = Self::rotate_point(rec.normal.into(), self.sin_theta, self.cos_theta).into();
             true
@@ -140,36 +162,64 @@ Rotation is more involved. We rotate the ray by the negative angle, test interse
             sin_theta = std::sin(radians);
             cos_theta = std::cos(radians);
             bbox = object->bounding_box();
-            // compute rotated bounding box ...
+
+            point3 min( infinity,  infinity,  infinity);
+            point3 max(-infinity, -infinity, -infinity);
+
+            for (int i = 0; i < 2; i++) {
+                for (int j = 0; j < 2; j++) {
+                    for (int k = 0; k < 2; k++) {
+                        auto x = i*bbox.x.max + (1-i)*bbox.x.min;
+                        auto y = j*bbox.y.max + (1-j)*bbox.y.min;
+                        auto z = k*bbox.z.max + (1-k)*bbox.z.min;
+
+                        auto newx =  cos_theta*x + sin_theta*z;
+                        auto newz = -sin_theta*x + cos_theta*z;
+
+                        vec3 tester(newx, y, newz);
+
+                        for (int c = 0; c < 3; c++) {
+                            min[c] = std::fmin(min[c], tester[c]);
+                            max[c] = std::fmax(max[c], tester[c]);
+                        }
+                    }
+                }
+            }
+
+            bbox = aabb(min, max);
         }
 
         bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
-            // Rotate ray into object space
-            point3 origin(
-                 cos_theta * r.origin()[0] + sin_theta * r.origin()[2],
-                 r.origin()[1],
-                -sin_theta * r.origin()[0] + cos_theta * r.origin()[2]
+            // Transform the ray from world space to object space.
+            auto origin = point3(
+                (cos_theta * r.origin().x()) - (sin_theta * r.origin().z()),
+                r.origin().y(),
+                (sin_theta * r.origin().x()) + (cos_theta * r.origin().z())
             );
-            vec3 direction(
-                 cos_theta * r.direction()[0] + sin_theta * r.direction()[2],
-                 r.direction()[1],
-                -sin_theta * r.direction()[0] + cos_theta * r.direction()[2]
+            auto direction = vec3(
+                (cos_theta * r.direction().x()) - (sin_theta * r.direction().z()),
+                r.direction().y(),
+                (sin_theta * r.direction().x()) + (cos_theta * r.direction().z())
             );
             ray rotated_r(origin, direction, r.time());
             if (!object->hit(rotated_r, ray_t, rec)) return false;
-            // Rotate hit point and normal back
+
+            // Transform the intersection from object space back to world space.
             rec.p = point3(
-                cos_theta * rec.p[0] - sin_theta * rec.p[2],
-                rec.p[1],
-                sin_theta * rec.p[0] + cos_theta * rec.p[2]
+                (cos_theta * rec.p.x()) + (sin_theta * rec.p.z()),
+                rec.p.y(),
+                (-sin_theta * rec.p.x()) + (cos_theta * rec.p.z())
             );
             rec.normal = vec3(
-                cos_theta * rec.normal[0] - sin_theta * rec.normal[2],
-                rec.normal[1],
-                sin_theta * rec.normal[0] + cos_theta * rec.normal[2]
+                (cos_theta * rec.normal.x()) + (sin_theta * rec.normal.z()),
+                rec.normal.y(),
+                (-sin_theta * rec.normal.x()) + (cos_theta * rec.normal.z())
             );
             return true;
         }
+
+        aabb bounding_box() const override { return bbox; }
+
       private:
         shared_ptr<hittable> object;
         double sin_theta, cos_theta;
@@ -180,6 +230,36 @@ Rotation is more involved. We rotate the ray by the negative angle, test interse
 </Tabs>
 
 With translation and rotation, we can place the two blocks in the Cornell box at the correct positions and angles to match the classic render.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Cornell box blocks"
+    let box1 = make_box(Point3::ZERO, Point3::new(165.0, 330.0, 165.0), white.clone());
+    let box1 = Arc::new(RotateY::new(Arc::new(box1), 15.0));
+    let box1 = Arc::new(Translate::new(box1, Vec3::new(265.0, 0.0, 295.0)));
+    world.add(box1);
+
+    let box2 = make_box(Point3::ZERO, Point3::new(165.0, 165.0, 165.0), white.clone());
+    let box2 = Arc::new(RotateY::new(Arc::new(box2), -18.0));
+    let box2 = Arc::new(Translate::new(box2, Vec3::new(130.0, 0.0, 65.0)));
+    world.add(box2);
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Cornell box blocks"
+    shared_ptr<hittable> box1 = box(point3(0,0,0), point3(165,330,165), white);
+    box1 = make_shared<rotate_y>(box1,  15);
+    box1 = make_shared<translate>(box1, vec3(265,0,295));
+    world.add(box1);
+
+    shared_ptr<hittable> box2 = box(point3(0,0,0), point3(165,165,165), white);
+    box2 = make_shared<rotate_y>(box2, -18);
+    box2 = make_shared<translate>(box2, vec3(130,0,65));
+    world.add(box2);
+    ```
+  </Tab>
+</Tabs>
 
 <Img src="img-2.20-cornell-blocks.png" caption="Cornell box with two blocks" />
 

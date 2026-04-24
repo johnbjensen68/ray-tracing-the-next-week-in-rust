@@ -67,9 +67,9 @@ The simplest version hashes the integer coordinates of a point to look up a rand
         }
 
         double noise(const point3& p) const {
-            auto i = int(std::floor(p.x())) & 255;
-            auto j = int(std::floor(p.y())) & 255;
-            auto k = int(std::floor(p.z())) & 255;
+            auto i = int(4*p.x()) & 255;
+            auto j = int(4*p.y()) & 255;
+            auto k = int(4*p.z()) & 255;
             return randfloat[perm_x[i] ^ perm_y[j] ^ perm_z[k]];
         }
       private:
@@ -251,8 +251,8 @@ Turbulence sums multiple frequencies of noise (octaves) with decreasing amplitud
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="perlin.h | turbulence"
-    double turbulence(const point3& p, int depth) const {
+    ```cpp filename="perlin.h | turb"
+    double turb(const point3& p, int depth) const {
         auto accum = 0.0;
         auto temp_p = p;
         auto weight = 1.0;
@@ -286,7 +286,7 @@ Using turbulence directly gives a camouflage-like look. To get the classic marbl
   <Tab label="C++">
     ```cpp filename="texture.h | Marble-like noise"
     color value(double u, double v, const point3& p) const override {
-        return color(.5,.5,.5) * (1 + std::sin(scale * p.z() + 10 * noise.turbulence(p, 7)));
+        return color(.5, .5, .5) * (1 + std::sin(scale * p.z() + 10 * noise.turb(p, 7)));
     }
     ```
   </Tab>
