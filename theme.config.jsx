@@ -51,10 +51,10 @@ const config = {
     );
   },
   project: {
-    link: "https://github.com/YOUR_USERNAME/ray-tracing-the-next-week-in-rust",
+    link: "https://github.com/johnbjensen68/ray-tracing-the-next-week-in-rust",
   },
   docsRepositoryBase:
-    "https://github.com/YOUR_USERNAME/ray-tracing-the-next-week-in-rust/tree/main",
+    "https://github.com/johnbjensen68/ray-tracing-the-next-week-in-rust/tree/main",
   components: {
     Callout: Callout,
     Tabs: Tabs,
