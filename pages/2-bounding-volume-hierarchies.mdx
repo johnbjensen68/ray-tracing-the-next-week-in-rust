@@ -1,0 +1,290 @@
+# Bounding Volume Hierarchies
+
+## The Key Idea
+
+Ray-object intersection is the main time sink in a ray tracer, and time is roughly linear in the number of objects. The idea with Bounding Volume Hierarchies (BVH) is to divide objects into subsets and wrap those subsets in a bounding volume. When checking if a ray hits anything, we first check if it hits the bounding volume; if it doesn't, we can skip all objects inside.
+
+The key property we need is this: the bounding volume need not be tight — a larger box still works, just not as efficiently.
+
+## Hierarchies of Bounding Volumes
+
+We organize bounding volumes into a tree. We start with a bounding box for the whole scene, then recursively split it into smaller boxes containing subsets of objects. Each leaf in the tree holds one or a few primitives; interior nodes hold only bounding boxes.
+
+To intersect the BVH, we start at the root and check each child's bounding box. If a ray misses a box, we prune the entire subtree beneath it. This turns a linear scan into a logarithmic one for random distributions of objects.
+
+## Axis-Aligned Bounding Boxes (AABBs)
+
+We use axis-aligned bounding boxes (AABBs) because they are cheap to test against rays. An AABB is defined by two corner points: a minimum-coordinate corner and a maximum-coordinate corner.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="aabb.rs | AABB definition"
+    #[derive(Clone, Copy)]
+    pub struct Aabb {
+        pub x: Interval,
+        pub y: Interval,
+        pub z: Interval,
+    }
+
+    impl Aabb {
+        pub fn new(x: Interval, y: Interval, z: Interval) -> Self {
+            Self { x, y, z }
+        }
+
+        pub fn from_points(a: Point3, b: Point3) -> Self {
+            Self {
+                x: if a.x() <= b.x() { Interval::new(a.x(), b.x()) } else { Interval::new(b.x(), a.x()) },
+                y: if a.y() <= b.y() { Interval::new(a.y(), b.y()) } else { Interval::new(b.y(), a.y()) },
+                z: if a.z() <= b.z() { Interval::new(a.z(), b.z()) } else { Interval::new(b.z(), a.z()) },
+            }
+        }
+
+        pub fn axis_interval(&self, n: usize) -> Interval {
+            match n {
+                0 => self.x,
+                1 => self.y,
+                _ => self.z,
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="aabb.h | AABB class"
+    class aabb {
+      public:
+        interval x, y, z;
+
+        aabb() {}
+
+        aabb(const interval& x, const interval& y, const interval& z)
+          : x(x), y(y), z(z) {}
+
+        aabb(const point3& a, const point3& b) {
+            x = (a[0] <= b[0]) ? interval(a[0], b[0]) : interval(b[0], a[0]);
+            y = (a[1] <= b[1]) ? interval(a[1], b[1]) : interval(b[1], a[1]);
+            z = (a[2] <= b[2]) ? interval(a[2], b[2]) : interval(b[2], a[2]);
+        }
+
+        const interval& axis_interval(int n) const {
+            if (n == 0) return x;
+            if (n == 1) return y;
+            return z;
+        }
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Ray Intersection with an AABB
+
+The slab method tests a ray against an AABB by intersecting it with three pairs of planes (one per axis) and checking if the resulting intervals overlap. If they all overlap, the ray hits the box.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="aabb.rs | Ray-AABB intersection"
+    impl Aabb {
+        pub fn hit(&self, r: &Ray, mut ray_t: Interval) -> bool {
+            for axis in 0..3 {
+                let ax = self.axis_interval(axis);
+                let adinv = 1.0 / r.direction()[axis];
+                let t0 = (ax.min - r.origin()[axis]) * adinv;
+                let t1 = (ax.max - r.origin()[axis]) * adinv;
+                if t0 < t1 {
+                    if t0 > ray_t.min { ray_t.min = t0; }
+                    if t1 < ray_t.max { ray_t.max = t1; }
+                } else {
+                    if t1 > ray_t.min { ray_t.min = t1; }
+                    if t0 < ray_t.max { ray_t.max = t0; }
+                }
+                if ray_t.max <= ray_t.min {
+                    return false;
+                }
+            }
+            true
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="aabb.h | hit function"
+    bool aabb::hit(const ray& r, interval ray_t) const {
+        for (int axis = 0; axis < 3; axis++) {
+            const interval& ax = axis_interval(axis);
+            const double adinv = 1.0 / r.direction()[axis];
+            auto t0 = (ax.min - r.origin()[axis]) * adinv;
+            auto t1 = (ax.max - r.origin()[axis]) * adinv;
+            if (t0 < t1) {
+                if (t0 > ray_t.min) ray_t.min = t0;
+                if (t1 < ray_t.max) ray_t.max = t1;
+            } else {
+                if (t1 > ray_t.min) ray_t.min = t1;
+                if (t0 < ray_t.max) ray_t.max = t0;
+            }
+            if (ray_t.max <= ray_t.min) return false;
+        }
+        return true;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Constructing Bounding Boxes for Hittables
+
+Every hittable object needs a method to return its AABB. We add `bounding_box` to the `Hittable` trait.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="hittable.rs | bounding_box in Hittable trait"
+    pub trait Hittable: Send + Sync {
+        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool;
+        fn bounding_box(&self) -> Aabb;
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="hittable.h | bounding_box in hittable"
+    class hittable {
+      public:
+        virtual ~hittable() = default;
+        virtual bool hit(const ray& r, interval ray_t, hit_record& rec) const = 0;
+        virtual aabb bounding_box() const = 0;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Creating Bounding Boxes of Lists of Objects
+
+A `HittableList`'s bounding box is the union of the bounding boxes of all its children, computed at construction time.
+
+## The BVH Node Class
+
+The BVH node is itself a `Hittable`. It stores two children (also `Hittable`s, which may be primitives or other BVH nodes) and their combined AABB.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="bvh.rs | BvhNode"
+    pub struct BvhNode {
+        left: Arc<dyn Hittable>,
+        right: Arc<dyn Hittable>,
+        bbox: Aabb,
+    }
+
+    impl Hittable for BvhNode {
+        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+            if !self.bbox.hit(r, ray_t) {
+                return false;
+            }
+            let hit_left = self.left.hit(r, ray_t, rec);
+            let hit_right = self.right.hit(
+                r,
+                Interval::new(ray_t.min, if hit_left { rec.t } else { ray_t.max }),
+                rec,
+            );
+            hit_left || hit_right
+        }
+
+        fn bounding_box(&self) -> Aabb {
+            self.bbox
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="bvh.h | bvh_node class"
+    class bvh_node : public hittable {
+      public:
+        bvh_node(hittable_list list) : bvh_node(list.objects, 0, list.objects.size()) {}
+
+        bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
+            if (!bbox.hit(r, ray_t)) return false;
+            bool hit_left = left->hit(r, ray_t, rec);
+            bool hit_right = right->hit(r, interval(ray_t.min, hit_left ? rec.t : ray_t.max), rec);
+            return hit_left || hit_right;
+        }
+
+        aabb bounding_box() const override { return bbox; }
+
+      private:
+        shared_ptr<hittable> left;
+        shared_ptr<hittable> right;
+        aabb bbox;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Splitting BVH Volumes
+
+To build the tree we recursively split the list of objects by sorting along a random axis and dividing the sorted list in half. The recursion bottoms out when there are one or two objects.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="bvh.rs | BvhNode::new"
+    impl BvhNode {
+        pub fn new(objects: &mut Vec<Arc<dyn Hittable>>, start: usize, end: usize) -> Self {
+            let axis = random_int(0, 2) as usize;
+            let comparator = |a: &Arc<dyn Hittable>, b: &Arc<dyn Hittable>| {
+                box_compare(a, b, axis)
+            };
+            let object_span = end - start;
+            let (left, right): (Arc<dyn Hittable>, Arc<dyn Hittable>) = match object_span {
+                1 => (objects[start].clone(), objects[start].clone()),
+                2 => {
+                    let (a, b) = (objects[start].clone(), objects[start + 1].clone());
+                    if comparator(&a, &b) == Ordering::Less { (a, b) } else { (b, a) }
+                }
+                _ => {
+                    objects[start..end].sort_by(comparator);
+                    let mid = start + object_span / 2;
+                    (
+                        Arc::new(BvhNode::new(objects, start, mid)),
+                        Arc::new(BvhNode::new(objects, mid, end)),
+                    )
+                }
+            };
+            let bbox = Aabb::surrounding_box(left.bounding_box(), right.bounding_box());
+            Self { left, right, bbox }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="bvh.h | bvh_node constructor"
+    bvh_node(std::vector<shared_ptr<hittable>>& objects, size_t start, size_t end) {
+        int axis = random_int(0, 2);
+        auto comparator = (axis == 0) ? box_x_compare
+                        : (axis == 1) ? box_y_compare
+                                      : box_z_compare;
+        size_t object_span = end - start;
+        if (object_span == 1) {
+            left = right = objects[start];
+        } else if (object_span == 2) {
+            left  = objects[start];
+            right = objects[start+1];
+            if (!comparator(left, right)) std::swap(left, right);
+        } else {
+            std::sort(objects.begin() + start, objects.begin() + end, comparator);
+            auto mid = start + object_span/2;
+            left  = make_shared<bvh_node>(objects, start, mid);
+            right = make_shared<bvh_node>(objects, mid, end);
+        }
+        bbox = aabb(left->bounding_box(), right->bounding_box());
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## The Box Comparison Functions
+
+The comparator functions sort hittables by the minimum coordinate of their bounding box along a given axis. These are used when sorting the objects array before splitting.
+
+## Another BVH Optimization
+
+We can slightly pad bounding boxes by a small epsilon to avoid degenerate (zero-thickness) slabs on axis-aligned primitives. This prevents floating-point misses on flat objects.

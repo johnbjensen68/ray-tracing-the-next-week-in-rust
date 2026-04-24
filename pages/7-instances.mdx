@@ -1,0 +1,182 @@
+# Instances
+
+Instances let us place the same geometric object multiple times in a scene with different transformations (translation, rotation, scaling) without duplicating the geometry. The trick is to apply the inverse transform to the ray before testing intersection.
+
+## Instance Translation
+
+Translation is the simplest transform. To translate a hittable by offset `T`, we subtract `T` from the ray origin before hitting, then add `T` back to the hit point.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="instance.rs | Translate"
+    pub struct Translate {
+        object: Arc<dyn Hittable>,
+        offset: Vec3,
+        bbox: Aabb,
+    }
+
+    impl Translate {
+        pub fn new(object: Arc<dyn Hittable>, offset: Vec3) -> Self {
+            let bbox = object.bounding_box() + offset;
+            Self { object, offset, bbox }
+        }
+    }
+
+    impl Hittable for Translate {
+        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+            // Move ray backwards by offset
+            let offset_r = Ray::new(r.origin - self.offset, r.direction, r.time);
+            if !self.object.hit(&offset_r, ray_t, rec) {
+                return false;
+            }
+            // Move hit point forward by offset
+            rec.p += self.offset;
+            true
+        }
+
+        fn bounding_box(&self) -> Aabb {
+            self.bbox
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="hittable.h | translate"
+    class translate : public hittable {
+      public:
+        translate(shared_ptr<hittable> object, const vec3& offset)
+          : object(object), offset(offset)
+        {
+            bbox = object->bounding_box() + offset;
+        }
+
+        bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
+            // Move the ray backwards by the offset
+            ray offset_r(r.origin() - offset, r.direction(), r.time());
+            if (!object->hit(offset_r, ray_t, rec)) return false;
+            rec.p += offset;
+            return true;
+        }
+
+        aabb bounding_box() const override { return bbox; }
+      private:
+        shared_ptr<hittable> object;
+        vec3 offset;
+        aabb bbox;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Instance Rotation
+
+Rotation is more involved. We rotate the ray by the negative angle, test intersection, then rotate the normal and hit point back. We support Y-axis rotation here, which is what you need to turn the Cornell box blocks.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="instance.rs | RotateY"
+    pub struct RotateY {
+        object: Arc<dyn Hittable>,
+        sin_theta: f64,
+        cos_theta: f64,
+        bbox: Aabb,
+    }
+
+    impl RotateY {
+        pub fn new(object: Arc<dyn Hittable>, angle: f64) -> Self {
+            let radians = angle.to_radians();
+            let sin_theta = radians.sin();
+            let cos_theta = radians.cos();
+            let bbox = Self::rotate_bbox(object.bounding_box(), sin_theta, cos_theta);
+            Self { object, sin_theta, cos_theta, bbox }
+        }
+
+        fn rotate_point(p: Point3, sin_theta: f64, cos_theta: f64) -> Point3 {
+            Point3::new(
+                cos_theta * p.x() - sin_theta * p.z(),
+                p.y(),
+                sin_theta * p.x() + cos_theta * p.z(),
+            )
+        }
+    }
+
+    impl Hittable for RotateY {
+        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+            // Rotate ray into object space (negative rotation)
+            let origin = Point3::new(
+                self.cos_theta * r.origin.x() + self.sin_theta * r.origin.z(),
+                r.origin.y(),
+                -self.sin_theta * r.origin.x() + self.cos_theta * r.origin.z(),
+            );
+            let direction = Vec3::new(
+                self.cos_theta * r.direction.x() + self.sin_theta * r.direction.z(),
+                r.direction.y(),
+                -self.sin_theta * r.direction.x() + self.cos_theta * r.direction.z(),
+            );
+            let rotated_r = Ray::new(origin, direction, r.time);
+            if !self.object.hit(&rotated_r, ray_t, rec) {
+                return false;
+            }
+            // Rotate hit point and normal back into world space
+            rec.p = Self::rotate_point(rec.p, self.sin_theta, self.cos_theta);
+            rec.normal = Self::rotate_point(rec.normal.into(), self.sin_theta, self.cos_theta).into();
+            true
+        }
+
+        fn bounding_box(&self) -> Aabb {
+            self.bbox
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="hittable.h | rotate_y"
+    class rotate_y : public hittable {
+      public:
+        rotate_y(shared_ptr<hittable> object, double angle) : object(object) {
+            auto radians = degrees_to_radians(angle);
+            sin_theta = std::sin(radians);
+            cos_theta = std::cos(radians);
+            bbox = object->bounding_box();
+            // compute rotated bounding box ...
+        }
+
+        bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
+            // Rotate ray into object space
+            point3 origin(
+                 cos_theta * r.origin()[0] + sin_theta * r.origin()[2],
+                 r.origin()[1],
+                -sin_theta * r.origin()[0] + cos_theta * r.origin()[2]
+            );
+            vec3 direction(
+                 cos_theta * r.direction()[0] + sin_theta * r.direction()[2],
+                 r.direction()[1],
+                -sin_theta * r.direction()[0] + cos_theta * r.direction()[2]
+            );
+            ray rotated_r(origin, direction, r.time());
+            if (!object->hit(rotated_r, ray_t, rec)) return false;
+            // Rotate hit point and normal back
+            rec.p = point3(
+                cos_theta * rec.p[0] - sin_theta * rec.p[2],
+                rec.p[1],
+                sin_theta * rec.p[0] + cos_theta * rec.p[2]
+            );
+            rec.normal = vec3(
+                cos_theta * rec.normal[0] - sin_theta * rec.normal[2],
+                rec.normal[1],
+                sin_theta * rec.normal[0] + cos_theta * rec.normal[2]
+            );
+            return true;
+        }
+      private:
+        shared_ptr<hittable> object;
+        double sin_theta, cos_theta;
+        aabb bbox;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+With translation and rotation, we can place the two blocks in the Cornell box at the correct positions and angles to match the classic render.

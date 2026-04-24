@@ -1,0 +1,172 @@
+# Quadrilaterals
+
+## Defining the Quadrilateral
+
+We introduce a second geometric primitive: the parallelogram (which we'll call a quad). A quad is defined by a corner point `Q`, and two edge vectors `u` and `v`. The four corners are `Q`, `Q+u`, `Q+v`, and `Q+u+v`.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="quad.rs | Quad struct"
+    pub struct Quad {
+        q: Point3,
+        u: Vec3,
+        v: Vec3,
+        mat: Arc<dyn Material>,
+        bbox: Aabb,
+        // derived values for hit testing
+        normal: Vec3,
+        d: f64,
+        w: Vec3,
+    }
+
+    impl Quad {
+        pub fn new(q: Point3, u: Vec3, v: Vec3, mat: Arc<dyn Material>) -> Self {
+            let n = u.cross(v);
+            let normal = n.unit_vector();
+            let d = normal.dot(q);
+            let w = n / n.dot(n);
+            let bbox = Aabb::from_points(q, q + u + v).pad();
+            Self { q, u, v, mat, bbox, normal, d, w }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="quad.h | quad class"
+    class quad : public hittable {
+      public:
+        quad(const point3& Q, const vec3& u, const vec3& v, shared_ptr<material> mat)
+          : Q(Q), u(u), v(v), mat(mat)
+        {
+            auto n = cross(u, v);
+            normal = unit_vector(n);
+            D = dot(normal, Q);
+            w = n / dot(n, n);
+            set_bounding_box();
+        }
+      private:
+        point3 Q;
+        vec3 u, v;
+        vec3 w;
+        shared_ptr<material> mat;
+        aabb bbox;
+        vec3 normal;
+        double D;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Ray-Plane Intersection
+
+A quad lies in a plane. We first find where the ray intersects the plane containing the quad, then check if the hit point is inside the quad's bounds.
+
+The plane equation is `dot(normal, p) = d`. Substituting the ray equation `p = origin + t * direction`:
+
+```
+t = (d - dot(normal, origin)) / dot(normal, direction)
+```
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="quad.rs | Ray-plane intersection"
+    impl Hittable for Quad {
+        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+            let denom = self.normal.dot(r.direction);
+            if denom.abs() < 1e-8 {
+                return false; // ray is parallel to plane
+            }
+            let t = (self.d - self.normal.dot(r.origin)) / denom;
+            if !ray_t.contains(t) {
+                return false;
+            }
+            let intersection = r.at(t);
+            // ... check if inside quad ...
+            true
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="quad.h | hit function"
+    bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
+        auto denom = dot(normal, r.direction());
+        if (std::fabs(denom) < 1e-8) return false;
+        auto t = (D - dot(normal, r.origin())) / denom;
+        if (!ray_t.contains(t)) return false;
+        auto intersection = r.at(t);
+        // ... check if inside quad ...
+        return true;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Finding the Plane That Contains a Given Quadrilateral
+
+The plane containing the quad is uniquely determined by its corner point `Q` and the cross product of its edge vectors `u` and `v`. We compute and cache the plane normal and offset at construction time.
+
+## Orienting Points on The Plane
+
+Once we have the intersection point on the plane, we need to determine whether it lies within the parallelogram. We decompose the vector from `Q` to the hit point into components along `u` and `v`.
+
+## Deriving the Planar Coordinates
+
+Using the precomputed vector `w = cross(u,v) / dot(cross(u,v), cross(u,v))`, we compute the planar coordinates `(alpha, beta)` of the hit point:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="quad.rs | planar coordinates"
+    let planar_hitpt_vector = intersection - self.q;
+    let alpha = self.w.dot(planar_hitpt_vector.cross(self.v));
+    let beta  = self.w.dot(self.u.cross(planar_hitpt_vector));
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="quad.h | planar coordinates"
+    auto planar_hitpt_vector = intersection - Q;
+    auto alpha = dot(w, cross(planar_hitpt_vector, v));
+    auto beta  = dot(w, cross(u, planar_hitpt_vector));
+    ```
+  </Tab>
+</Tabs>
+
+## Interior Testing of The Intersection Using UV Coordinates
+
+The hit point is inside the parallelogram if and only if both `alpha` and `beta` are in the interval [0, 1]. These coordinates also serve as UV texture coordinates.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="quad.rs | interior test"
+    fn is_interior(alpha: f64, beta: f64, rec: &mut HitRecord) -> bool {
+        let unit = Interval::new(0.0, 1.0);
+        if !unit.contains(alpha) || !unit.contains(beta) {
+            return false;
+        }
+        rec.u = alpha;
+        rec.v = beta;
+        true
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="quad.h | is_interior"
+    virtual bool is_interior(double a, double b, hit_record& rec) const {
+        interval unit_interval = interval(0, 1);
+        if (!unit_interval.contains(a) || !unit_interval.contains(b))
+            return false;
+        rec.u = a;
+        rec.v = b;
+        return true;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Additional 2D Primitives
+
+The same framework can accommodate other 2D shapes: triangles (test that `alpha + beta <= 1`) and disks (test that the point is within a unit circle). You can subclass `Quad` and override `is_interior` for these variants.

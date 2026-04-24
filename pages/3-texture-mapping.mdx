@@ -1,0 +1,210 @@
+# Texture Mapping
+
+## Constant Color Texture
+
+Until now, materials have stored a single color. We generalize this with a `Texture` trait so that any function from a surface point to a color can be used. The simplest texture is a constant color.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="texture.rs | Texture trait and SolidColor"
+    pub trait Texture: Send + Sync {
+        fn value(&self, u: f64, v: f64, p: &Point3) -> Color;
+    }
+
+    pub struct SolidColor {
+        albedo: Color,
+    }
+
+    impl SolidColor {
+        pub fn new(albedo: Color) -> Self {
+            Self { albedo }
+        }
+    }
+
+    impl Texture for SolidColor {
+        fn value(&self, _u: f64, _v: f64, _p: &Point3) -> Color {
+            self.albedo
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="texture.h | texture class and solid_color"
+    class texture {
+      public:
+        virtual ~texture() = default;
+        virtual color value(double u, double v, const point3& p) const = 0;
+    };
+
+    class solid_color : public texture {
+      public:
+        solid_color(const color& albedo) : albedo(albedo) {}
+
+        color value(double u, double v, const point3& p) const override {
+            return albedo;
+        }
+      private:
+        color albedo;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Solid Textures: A Checker Texture
+
+A checker texture alternates between two textures based on the sign of a trig function applied to the point coordinates. Because the function depends on the 3D position, it tiles through space — it's a solid (or 3D) texture.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="texture.rs | CheckerTexture"
+    pub struct CheckerTexture {
+        inv_scale: f64,
+        even: Arc<dyn Texture>,
+        odd: Arc<dyn Texture>,
+    }
+
+    impl CheckerTexture {
+        pub fn new(scale: f64, even: Arc<dyn Texture>, odd: Arc<dyn Texture>) -> Self {
+            Self { inv_scale: 1.0 / scale, even, odd }
+        }
+    }
+
+    impl Texture for CheckerTexture {
+        fn value(&self, u: f64, v: f64, p: &Point3) -> Color {
+            let x = (self.inv_scale * p.x()).floor() as i32;
+            let y = (self.inv_scale * p.y()).floor() as i32;
+            let z = (self.inv_scale * p.z()).floor() as i32;
+            if (x + y + z) % 2 == 0 {
+                self.even.value(u, v, p)
+            } else {
+                self.odd.value(u, v, p)
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="texture.h | checker_texture"
+    class checker_texture : public texture {
+      public:
+        checker_texture(double scale, shared_ptr<texture> even, shared_ptr<texture> odd)
+          : inv_scale(1.0 / scale), even(even), odd(odd) {}
+
+        color value(double u, double v, const point3& p) const override {
+            auto xInt = int(std::floor(inv_scale * p.x()));
+            auto yInt = int(std::floor(inv_scale * p.y()));
+            auto zInt = int(std::floor(inv_scale * p.z()));
+            bool isEven = (xInt + yInt + zInt) % 2 == 0;
+            return isEven ? even->value(u, v, p) : odd->value(u, v, p);
+        }
+      private:
+        double inv_scale;
+        shared_ptr<texture> even, odd;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Rendering The Solid Checker Texture
+
+Here is a scene with two large spheres using the checker texture — one on the floor and one in the air. The checker pattern tiles through all 3D space, so both spheres show the same tiling.
+
+## Texture Coordinates for Spheres
+
+For image textures we need UV coordinates — a 2D parameterization of the surface. For a sphere we use the standard spherical mapping: `u` runs 0–1 around the equator and `v` runs 0–1from south pole to north pole.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="sphere.rs | get_sphere_uv"
+    fn get_sphere_uv(p: &Point3) -> (f64, f64) {
+        // p: a point on the unit sphere
+        let theta = (-p.y()).acos();
+        let phi = (-p.z()).atan2(p.x()) + std::f64::consts::PI;
+        let u = phi / (2.0 * std::f64::consts::PI);
+        let v = theta / std::f64::consts::PI;
+        (u, v)
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="sphere.h | get_sphere_uv"
+    static void get_sphere_uv(const point3& p, double& u, double& v) {
+        // p: a point on the unit sphere
+        auto theta = std::acos(-p.y());
+        auto phi = std::atan2(-p.z(), p.x()) + pi;
+        u = phi / (2 * pi);
+        v = theta / pi;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Accessing Texture Image Data
+
+For image textures we load an image file (e.g., a JPEG) and sample it at UV coordinates. We clamp out-of-range UV values so they don't panic or produce garbage.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="texture.rs | ImageTexture"
+    pub struct ImageTexture {
+        image: RgbImage,
+    }
+
+    impl ImageTexture {
+        pub fn new(filename: &str) -> Self {
+            let image = image::open(filename)
+                .expect("Could not open image file")
+                .into_rgb8();
+            Self { image }
+        }
+    }
+
+    impl Texture for ImageTexture {
+        fn value(&self, u: f64, v: f64, _p: &Point3) -> Color {
+            let u = u.clamp(0.0, 1.0);
+            let v = 1.0 - v.clamp(0.0, 1.0);
+            let i = (u * self.image.width() as f64) as u32;
+            let j = (v * self.image.height() as f64) as u32;
+            let i = i.min(self.image.width() - 1);
+            let j = j.min(self.image.height() - 1);
+            let pixel = self.image.get_pixel(i, j);
+            let scale = 1.0 / 255.0;
+            Color::new(
+                scale * pixel[0] as f64,
+                scale * pixel[1] as f64,
+                scale * pixel[2] as f64,
+            )
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="texture.h | image_texture"
+    class image_texture : public texture {
+      public:
+        image_texture(const char* filename) : image(filename) {}
+
+        color value(double u, double v, const point3& p) const override {
+            if (image.height() <= 0) return color(0,1,1);
+            u = interval(0,1).clamp(u);
+            v = 1.0 - interval(0,1).clamp(v);
+            auto i = int(u * image.width());
+            auto j = int(v * image.height());
+            auto pixel = image.pixel_data(i, j);
+            auto scale = 1.0 / 255.0;
+            return color(scale*pixel[0], scale*pixel[1], scale*pixel[2]);
+        }
+      private:
+        rtw_image image;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Rendering The Image Texture
+
+By mapping an earth image onto a sphere using our UV coordinates, we can render a globe. The earth texture is applied so the equator aligns with the sphere's equator.

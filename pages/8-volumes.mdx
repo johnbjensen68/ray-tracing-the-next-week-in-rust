@@ -1,0 +1,182 @@
+# Volumes
+
+## Constant Density Mediums
+
+Volumes (participating media) like fog, smoke, or clouds scatter light as a ray passes through them. We model a constant-density medium where there is a fixed probability per unit length that the ray scatters. This gives an exponential distribution for how far the ray travels before scattering.
+
+The trick is to wrap any convex boundary object with a `ConstantMedium` that intercepts rays passing through the boundary and probabilistically scatters them.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="constant_medium.rs | ConstantMedium"
+    pub struct ConstantMedium {
+        boundary: Arc<dyn Hittable>,
+        neg_inv_density: f64,
+        phase_function: Arc<dyn Material>,
+    }
+
+    impl ConstantMedium {
+        pub fn new(boundary: Arc<dyn Hittable>, density: f64, albedo: Color) -> Self {
+            Self {
+                boundary,
+                neg_inv_density: -1.0 / density,
+                phase_function: Arc::new(Isotropic::from_color(albedo)),
+            }
+        }
+    }
+
+    impl Hittable for ConstantMedium {
+        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+            let mut rec1 = HitRecord::default();
+            let mut rec2 = HitRecord::default();
+
+            if !self.boundary.hit(r, Interval::UNIVERSE, &mut rec1) { return false; }
+            if !self.boundary.hit(r, Interval::new(rec1.t + 0.0001, f64::INFINITY), &mut rec2) { return false; }
+
+            let t_min = rec1.t.max(ray_t.min);
+            let t_max = rec2.t.min(ray_t.max);
+            if t_min >= t_max { return false; }
+
+            let ray_length = r.direction.length();
+            let distance_inside_boundary = (t_max - t_min) * ray_length;
+            let hit_distance = self.neg_inv_density * random_double().ln();
+
+            if hit_distance > distance_inside_boundary { return false; }
+
+            rec.t = t_min + hit_distance / ray_length;
+            rec.p = r.at(rec.t);
+            rec.normal = Vec3::new(1.0, 0.0, 0.0); // arbitrary
+            rec.front_face = true;
+            rec.mat = self.phase_function.clone();
+            true
+        }
+
+        fn bounding_box(&self) -> Aabb {
+            self.boundary.bounding_box()
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="constant_medium.h | constant_medium"
+    class constant_medium : public hittable {
+      public:
+        constant_medium(shared_ptr<hittable> boundary, double density, const color& albedo)
+          : boundary(boundary),
+            neg_inv_density(-1 / density),
+            phase_function(make_shared<isotropic>(albedo))
+        {}
+
+        bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
+            hit_record rec1, rec2;
+            if (!boundary->hit(r, interval::universe, rec1)) return false;
+            if (!boundary->hit(r, interval(rec1.t + 0.0001, infinity), rec2)) return false;
+            auto t_min = std::fmax(rec1.t, ray_t.min);
+            auto t_max = std::fmin(rec2.t, ray_t.max);
+            if (t_min >= t_max) return false;
+            auto ray_length = r.direction().length();
+            auto distance_inside_boundary = (t_max - t_min) * ray_length;
+            auto hit_distance = neg_inv_density * std::log(random_double());
+            if (hit_distance > distance_inside_boundary) return false;
+            rec.t = t_min + hit_distance / ray_length;
+            rec.p = r.at(rec.t);
+            rec.normal = vec3(1,0,0);  // arbitrary
+            rec.front_face = true;
+            rec.mat = phase_function;
+            return true;
+        }
+
+        aabb bounding_box() const override { return boundary->bounding_box(); }
+      private:
+        shared_ptr<hittable> boundary;
+        double neg_inv_density;
+        shared_ptr<material> phase_function;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+The `Isotropic` material scatters the ray in a completely random direction (uniform sphere distribution). This models media where light scatters equally in all directions.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="material.rs | Isotropic"
+    pub struct Isotropic {
+        albedo: Arc<dyn Texture>,
+    }
+
+    impl Material for Isotropic {
+        fn scatter(
+            &self, r_in: &Ray, rec: &HitRecord,
+            attenuation: &mut Color, scattered: &mut Ray,
+        ) -> bool {
+            *scattered = Ray::new(rec.p, Vec3::random_unit_vector(), r_in.time);
+            *attenuation = self.albedo.value(rec.u, rec.v, &rec.p);
+            true
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="material.h | isotropic"
+    class isotropic : public material {
+      public:
+        isotropic(const color& albedo) : tex(make_shared<solid_color>(albedo)) {}
+        isotropic(shared_ptr<texture> tex) : tex(tex) {}
+
+        bool scatter(const ray& r_in, const hit_record& rec,
+                     color& attenuation, ray& scattered) const override {
+            scattered = ray(rec.p, random_unit_vector(), r_in.time());
+            attenuation = tex->value(rec.u, rec.v, rec.p);
+            return true;
+        }
+      private:
+        shared_ptr<texture> tex;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Rendering a Cornell Box with Smoke and Fog Boxes
+
+We replace the two solid boxes in the Cornell Box with constant-density media. One becomes black smoke and the other becomes white fog. With enough samples, the scattering produces realistic volume rendering.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Cornell box with volumes"
+    let box1 = make_box(
+        Point3::new(0.0,0.0,0.0),
+        Point3::new(165.0,330.0,165.0),
+        white.clone()
+    );
+    let box1 = Arc::new(RotateY::new(Arc::new(box1), 15.0));
+    let box1 = Arc::new(Translate::new(box1, Vec3::new(265.0,0.0,295.0)));
+    world.add(Arc::new(ConstantMedium::new(box1, 0.01, Color::new(0.0,0.0,0.0))));
+
+    let box2 = make_box(
+        Point3::new(0.0,0.0,0.0),
+        Point3::new(165.0,165.0,165.0),
+        white.clone()
+    );
+    let box2 = Arc::new(RotateY::new(Arc::new(box2), -18.0));
+    let box2 = Arc::new(Translate::new(box2, Vec3::new(130.0,0.0,65.0)));
+    world.add(Arc::new(ConstantMedium::new(box2, 0.01, Color::new(1.0,1.0,1.0))));
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Cornell box with volumes"
+    auto box1 = make_shared<box>(point3(0,0,0), point3(165,330,165), white);
+    box1 = make_shared<rotate_y>(box1, 15);
+    box1 = make_shared<translate>(box1, vec3(265,0,295));
+    world.add(make_shared<constant_medium>(box1, 0.01, color(0,0,0)));
+
+    auto box2 = make_shared<box>(point3(0,0,0), point3(165,165,165), white);
+    box2 = make_shared<rotate_y>(box2, -18);
+    box2 = make_shared<translate>(box2, vec3(130,0,65));
+    world.add(make_shared<constant_medium>(box2, 0.01, color(1,1,1)));
+    ```
+  </Tab>
+</Tabs>

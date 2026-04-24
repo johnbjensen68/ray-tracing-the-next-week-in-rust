@@ -1,0 +1,176 @@
+# Lights
+
+## Emissive Materials
+
+Until now, lighting has come from a background sky. We add a `DiffuseLight` material that emits color regardless of the incoming ray direction. It doesn't scatter — it only emits.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="material.rs | DiffuseLight"
+    pub struct DiffuseLight {
+        emit: Arc<dyn Texture>,
+    }
+
+    impl DiffuseLight {
+        pub fn new(emit: Arc<dyn Texture>) -> Self {
+            Self { emit }
+        }
+
+        pub fn from_color(color: Color) -> Self {
+            Self { emit: Arc::new(SolidColor::new(color)) }
+        }
+    }
+
+    impl Material for DiffuseLight {
+        fn scatter(
+            &self, _r_in: &Ray, _rec: &HitRecord,
+            _attenuation: &mut Color, _scattered: &mut Ray,
+        ) -> bool {
+            false // does not scatter
+        }
+
+        fn emitted(&self, u: f64, v: f64, p: &Point3) -> Color {
+            self.emit.value(u, v, p)
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="material.h | diffuse_light"
+    class diffuse_light : public material {
+      public:
+        diffuse_light(shared_ptr<texture> tex) : tex(tex) {}
+        diffuse_light(const color& emit) : tex(make_shared<solid_color>(emit)) {}
+
+        color emitted(double u, double v, const point3& p) const override {
+            return tex->value(u, v, p);
+        }
+      private:
+        shared_ptr<texture> tex;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Adding Background Color to the Ray Color Function
+
+We add a `background` color to the renderer so that rays that miss all objects return the background instead of pure black. For scenes with explicit lights, the background is usually black.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="camera.rs | background in ray_color"
+    fn ray_color(r: &Ray, background: Color, world: &dyn Hittable, depth: i32) -> Color {
+        if depth <= 0 {
+            return Color::new(0.0, 0.0, 0.0);
+        }
+        let mut rec = HitRecord::default();
+        if !world.hit(r, Interval::new(0.001, f64::INFINITY), &mut rec) {
+            return background;
+        }
+        let color_from_emission = rec.mat.emitted(rec.u, rec.v, &rec.p);
+        let mut attenuation = Color::default();
+        let mut scattered = Ray::default();
+        if !rec.mat.scatter(r, &rec, &mut attenuation, &mut scattered) {
+            return color_from_emission;
+        }
+        let color_from_scatter =
+            attenuation * ray_color(&scattered, background, world, depth - 1);
+        color_from_emission + color_from_scatter
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="camera.h | ray_color with background"
+    color ray_color(const ray& r, const color& background, int depth, const hittable& world) const {
+        if (depth <= 0) return color(0,0,0);
+        hit_record rec;
+        if (!world.hit(r, interval(0.001, infinity), rec))
+            return background;
+        color color_from_emission = rec.mat->emitted(rec.u, rec.v, rec.p);
+        ray scattered;
+        color attenuation;
+        if (!rec.mat->scatter(r, rec, attenuation, scattered))
+            return color_from_emission;
+        color color_from_scatter = attenuation * ray_color(scattered, background, depth-1, world);
+        return color_from_emission + color_from_scatter;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Turning Objects into Lights
+
+Any object with a `DiffuseLight` material becomes a light source. We can use a quad as a rectangular area light — common in physically-based rendering.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Rectangle light"
+    let light_material = Arc::new(DiffuseLight::from_color(Color::new(15.0, 15.0, 15.0)));
+    let light = Quad::new(
+        Point3::new(3.0, 1.0, -2.0),
+        Vec3::new(2.0, 0.0, 0.0),
+        Vec3::new(0.0, 2.0, 0.0),
+        light_material,
+    );
+    world.add(Arc::new(light));
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Rectangle light"
+    auto difflight = make_shared<diffuse_light>(color(15, 15, 15));
+    world.add(make_shared<quad>(
+        point3(3,1,-2), vec3(2,0,0), vec3(0,2,0), difflight));
+    ```
+  </Tab>
+</Tabs>
+
+## Creating an Empty "Cornell Box"
+
+The Cornell Box is the classic test scene for global illumination: a box made of quads — two red walls, two white walls, a white ceiling, a white floor, and a white rectangular light on the ceiling.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Cornell box setup"
+    pub fn cornell_box() -> HittableList {
+        let mut world = HittableList::new();
+
+        let red   = Arc::new(Lambertian::from_color(Color::new(0.65, 0.05, 0.05)));
+        let white = Arc::new(Lambertian::from_color(Color::new(0.73, 0.73, 0.73)));
+        let green = Arc::new(Lambertian::from_color(Color::new(0.12, 0.45, 0.15)));
+        let light = Arc::new(DiffuseLight::from_color(Color::new(15.0, 15.0, 15.0)));
+
+        // walls
+        world.add(Arc::new(Quad::new(Point3::new(555.0,0.0,0.0),   Vec3::new(0.0,555.0,0.0), Vec3::new(0.0,0.0,555.0), green)));
+        world.add(Arc::new(Quad::new(Point3::new(0.0,0.0,0.0),     Vec3::new(0.0,555.0,0.0), Vec3::new(0.0,0.0,555.0), red)));
+        world.add(Arc::new(Quad::new(Point3::new(343.0,554.0,332.0),Vec3::new(-130.0,0.0,0.0),Vec3::new(0.0,0.0,-105.0),light)));
+        world.add(Arc::new(Quad::new(Point3::new(0.0,0.0,0.0),     Vec3::new(555.0,0.0,0.0), Vec3::new(0.0,0.0,555.0), white.clone())));
+        world.add(Arc::new(Quad::new(Point3::new(555.0,555.0,555.0),Vec3::new(-555.0,0.0,0.0),Vec3::new(0.0,0.0,-555.0),white.clone())));
+        world.add(Arc::new(Quad::new(Point3::new(0.0,0.0,555.0),   Vec3::new(555.0,0.0,0.0), Vec3::new(0.0,555.0,0.0), white.clone())));
+
+        world
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Cornell box"
+    void cornell_box() {
+        hittable_list world;
+        auto red   = make_shared<lambertian>(color(.65, .05, .05));
+        auto white = make_shared<lambertian>(color(.73, .73, .73));
+        auto green = make_shared<lambertian>(color(.12, .45, .15));
+        auto light = make_shared<diffuse_light>(color(15, 15, 15));
+
+        world.add(make_shared<quad>(point3(555,0,0),   vec3(0,555,0), vec3(0,0,555), green));
+        world.add(make_shared<quad>(point3(0,0,0),     vec3(0,555,0), vec3(0,0,555), red));
+        world.add(make_shared<quad>(point3(343,554,332),vec3(-130,0,0),vec3(0,0,-105),light));
+        world.add(make_shared<quad>(point3(0,0,0),     vec3(555,0,0), vec3(0,0,555), white));
+        world.add(make_shared<quad>(point3(555,555,555),vec3(-555,0,0),vec3(0,0,-555),white));
+        world.add(make_shared<quad>(point3(0,0,555),   vec3(555,0,0), vec3(0,555,0), white));
+    }
+    ```
+  </Tab>
+</Tabs>

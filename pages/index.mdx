@@ -1,0 +1,23 @@
+# Introduction
+
+Welcome! This is a tutorial to learn Rust by implementing an advanced ray tracer, based on the book [Ray Tracing: The Next Week](https://raytracing.github.io/books/RayTracingTheNextWeek.html) by Peter Shirley, Trevor David Black, and Steve Hollasch. It is the sequel to [Ray Tracing in One Weekend](https://raytracing.github.io/books/RayTracingInOneWeekend.html), and this tutorial assumes you have already completed [The Ray Tracing Road to Rust](https://the-ray-tracing-road-to-rust.vercel.app/) (or have equivalent knowledge).
+
+In this installment we add textures, volumes (like fog), lights, quadrilateral primitives, instances, and a bounding volume hierarchy (BVH) to make the renderer fast enough for complex scenes.
+
+We adapt the original C++ book into Rust, provide a reference Rust implementation, and add notes on Rust-specific features and idioms. You can switch between Rust and C++ code with the interactive tabs to compare the two languages side by side.
+
+Along the way, you'll encounter:
+
+*   Rust traits and generics applied to an extensible material/texture system
+
+*   Smart pointers (`Arc<T>`, `Box<T>`) for sharing scene objects
+
+*   Recursive data structures for the BVH tree
+
+*   Procedural texture generation with Perlin noise
+
+*   Coordinate transformations with instances
+
+*   Participating media (fog/smoke) via probabilistic ray scattering
+
+Have fun!
