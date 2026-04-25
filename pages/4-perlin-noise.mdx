@@ -1,14 +1,20 @@
 # Perlin Noise
 
-Perlin noise is a foundational technique for procedural textures. It produces a smooth, pseudorandom signal that looks natural — great for terrain, marble, and other organic appearances.
+To get cool looking solid textures most people use some form of Perlin noise. These are named after their inventor Ken Perlin.
+
+Perlin texture doesn't return white noise like this:
 
 <Img src="img-2.06-white-noise.jpg" caption="White noise" />
 
+Instead it returns something similar to blurred white noise:
+
 <Img src="img-2.07-white-noise-blurred.jpg" caption="White noise, blurred" />
+
+A key part of Perlin noise is that it is repeatable: it takes a 3D point as input and always returns the same randomish number. Nearby points return similar numbers.
 
 ## Using Blocks of Random Numbers
 
-The simplest version hashes the integer coordinates of a point to look up a random float. We precompute an array of random floats and use a hash to select from it.
+The simplest approach tiles space with a 3D array of random numbers. We use hashing to scramble the lookup instead of tiling. We precompute an array of random floats and three permutation arrays, then XOR-combine the permuted indices to select a value.
 
 <Tabs>
   <Tab label="Rust">
@@ -34,15 +40,14 @@ The simplest version hashes the integer coordinates of a point to look up a rand
         }
 
         pub fn noise(&self, p: &Point3) -> f64 {
-            let i = (p.x().floor() as i32 & 255) as usize;
-            let j = (p.y().floor() as i32 & 255) as usize;
-            let k = (p.z().floor() as i32 & 255) as usize;
-            self.randfloat[self.perm_x[i] ^ self.perm_y[j] ^ self.perm_z[k]]
+            let i = (4.0 * p.x()) as i32 & 255;
+            let j = (4.0 * p.y()) as i32 & 255;
+            let k = (4.0 * p.z()) as i32 & 255;
+            self.randfloat[self.perm_x[i as usize] ^ self.perm_y[j as usize] ^ self.perm_z[k as usize]]
         }
 
         fn generate_perm() -> Vec<usize> {
             let mut p: Vec<usize> = (0..POINT_COUNT).collect();
-            // Fisher-Yates shuffle
             for i in (1..POINT_COUNT).rev() {
                 let target = random_int(0, i as i32) as usize;
                 p.swap(i, target);
@@ -58,12 +63,12 @@ The simplest version hashes the integer coordinates of a point to look up a rand
     class perlin {
       public:
         perlin() {
-            randfloat = new double[point_count];
-            for (int i = 0; i < point_count; i++)
+            for (int i = 0; i < point_count; i++) {
                 randfloat[i] = random_double();
-            perm_x = perlin_generate_perm();
-            perm_y = perlin_generate_perm();
-            perm_z = perlin_generate_perm();
+            }
+            perlin_generate_perm(perm_x);
+            perlin_generate_perm(perm_y);
+            perlin_generate_perm(perm_z);
         }
 
         double noise(const point3& p) const {
@@ -72,10 +77,68 @@ The simplest version hashes the integer coordinates of a point to look up a rand
             auto k = int(4*p.z()) & 255;
             return randfloat[perm_x[i] ^ perm_y[j] ^ perm_z[k]];
         }
+
       private:
         static const int point_count = 256;
-        double* randfloat;
-        int* perm_x, *perm_y, *perm_z;
+        double randfloat[point_count];
+        int perm_x[point_count];
+        int perm_y[point_count];
+        int perm_z[point_count];
+
+        static void perlin_generate_perm(int* p) {
+            for (int i = 0; i < point_count; i++)
+                p[i] = i;
+            permute(p, point_count);
+        }
+
+        static void permute(int* p, int n) {
+            for (int i = n-1; i > 0; i--) {
+                int target = random_int(0, i);
+                int tmp = p[i];
+                p[i] = p[target];
+                p[target] = tmp;
+            }
+        }
+    };
+    ```
+  </Tab>
+</Tabs>
+
+We can use the Perlin class as a texture. A simple noise texture just maps the noise value to a grayscale color.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="texture.rs | NoiseTexture"
+    pub struct NoiseTexture {
+        noise: Perlin,
+    }
+
+    impl NoiseTexture {
+        pub fn new() -> Self {
+            Self { noise: Perlin::new() }
+        }
+    }
+
+    impl Texture for NoiseTexture {
+        fn value(&self, _u: f64, _v: f64, p: &Point3) -> Color {
+            Color::new(1.0, 1.0, 1.0) * self.noise.noise(p)
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="texture.h | noise_texture"
+    class noise_texture : public texture {
+      public:
+        noise_texture() {}
+
+        color value(double u, double v, const point3& p) const override {
+            return color(1,1,1) * noise.noise(p);
+        }
+
+      private:
+        perlin noise;
     };
     ```
   </Tab>
@@ -113,6 +176,21 @@ Using floor-indexed lookups produces a blocky result. We apply trilinear interpo
         }
         trilinear_interp(c, u, v, w)
     }
+
+    fn trilinear_interp(c: [[[f64; 2]; 2]; 2], u: f64, v: f64, w: f64) -> f64 {
+        let mut accum = 0.0;
+        for i in 0..2 {
+            for j in 0..2 {
+                for k in 0..2 {
+                    accum += (i as f64 * u + (1 - i) as f64 * (1.0 - u))
+                        * (j as f64 * v + (1 - j) as f64 * (1.0 - v))
+                        * (k as f64 * w + (1 - k) as f64 * (1.0 - w))
+                        * c[i][j][k];
+                }
+            }
+        }
+        accum
+    }
     ```
   </Tab>
 
@@ -133,6 +211,18 @@ Using floor-indexed lookups produces a blocky result. We apply trilinear interpo
                         perm_x[(i+di) & 255] ^ perm_y[(j+dj) & 255] ^ perm_z[(k+dk) & 255]
                     ];
         return trilinear_interp(c, u, v, w);
+    }
+
+    static double trilinear_interp(double c[2][2][2], double u, double v, double w) {
+        auto accum = 0.0;
+        for (int i=0; i<2; i++)
+            for (int j=0; j<2; j++)
+                for (int k=0; k<2; k++)
+                    accum += (i*u + (1-i)*(1-u))
+                           * (j*v + (1-j)*(1-v))
+                           * (k*w + (1-k)*(1-w))
+                           * c[i][j][k];
+        return accum;
     }
     ```
   </Tab>
@@ -166,22 +256,98 @@ Simple linear interpolation shows Mach-band artifacts (stripes) where the interp
 
 ## Tweaking The Frequency
 
-We can scale the input point to control the frequency of the noise. Multiplying the point by a scale factor makes the features smaller and more frequent.
+It is also a bit low frequency. We can scale the input point to make it vary more quickly.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="texture.rs | NoiseTexture with scale"
+    pub struct NoiseTexture {
+        noise: Perlin,
+        scale: f64,
+    }
+
+    impl NoiseTexture {
+        pub fn new(scale: f64) -> Self {
+            Self { noise: Perlin::new(), scale }
+        }
+    }
+
+    impl Texture for NoiseTexture {
+        fn value(&self, _u: f64, _v: f64, p: &Point3) -> Color {
+            Color::new(1.0, 1.0, 1.0) * self.noise.noise(&(self.scale * *p))
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="texture.h | noise_texture with scale"
+    class noise_texture : public texture {
+      public:
+        noise_texture(double scale) : scale(scale) {}
+
+        color value(double u, double v, const point3& p) const override {
+            return color(1,1,1) * noise.noise(scale * p);
+        }
+
+      private:
+        perlin noise;
+        double scale;
+    };
+    ```
+  </Tab>
+</Tabs>
 
 <Img src="img-2.12-perlin-hifreq.png" caption="Perlin texture, higher frequency" />
 
 ## Using Random Vectors on the Lattice Points
 
-Instead of random scalars, we place random unit vectors at each lattice point. The interpolation is then over dot products, which breaks up the grid-like pattern and produces the classic Perlin appearance.
+Instead of random scalars, we place random unit vectors at each lattice point. The interpolation is then over dot products, which shifts the minima and maxima off the integer grid and breaks up the grid-like pattern to produce the classic Perlin appearance.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="perlin.rs | Random vectors on lattice"
+    ```rust filename="perlin.rs | Perlin with random unit vectors"
     pub struct Perlin {
         randvec: Vec<Vec3>,
         perm_x: Vec<usize>,
         perm_y: Vec<usize>,
         perm_z: Vec<usize>,
+    }
+
+    impl Perlin {
+        pub fn new() -> Self {
+            let randvec: Vec<Vec3> = (0..POINT_COUNT)
+                .map(|_| Vec3::random_range(-1.0, 1.0).unit_vector())
+                .collect();
+            Self {
+                randvec,
+                perm_x: Self::generate_perm(),
+                perm_y: Self::generate_perm(),
+                perm_z: Self::generate_perm(),
+            }
+        }
+
+        pub fn noise(&self, p: &Point3) -> f64 {
+            let u = p.x() - p.x().floor();
+            let v = p.y() - p.y().floor();
+            let w = p.z() - p.z().floor();
+            let i = p.x().floor() as i32;
+            let j = p.y().floor() as i32;
+            let k = p.z().floor() as i32;
+            let mut c = [[[Vec3::zero(); 2]; 2]; 2];
+            for di in 0..2i32 {
+                for dj in 0..2i32 {
+                    for dk in 0..2i32 {
+                        c[di as usize][dj as usize][dk as usize] = self.randvec[
+                            self.perm_x[((i + di) & 255) as usize]
+                                ^ self.perm_y[((j + dj) & 255) as usize]
+                                ^ self.perm_z[((k + dk) & 255) as usize]
+                        ];
+                    }
+                }
+            }
+            perlin_interp(c, u, v, w)
+        }
     }
 
     fn perlin_interp(c: [[[Vec3; 2]; 2]; 2], u: f64, v: f64, w: f64) -> f64 {
@@ -206,22 +372,95 @@ Instead of random scalars, we place random unit vectors at each lattice point. T
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="perlin.h | perlin_interp with vectors"
-    static double perlin_interp(const vec3 c[2][2][2], double u, double v, double w) {
-        auto uu = u*u*(3-2*u);
-        auto vv = v*v*(3-2*v);
-        auto ww = w*w*(3-2*w);
-        double accum = 0.0;
-        for (int i=0; i<2; i++)
-            for (int j=0; j<2; j++)
-                for (int k=0; k<2; k++) {
-                    vec3 weight_v(u-i, v-j, w-k);
-                    accum += (i*uu + (1-i)*(1-uu))
-                           * (j*vv + (1-j)*(1-vv))
-                           * (k*ww + (1-k)*(1-ww))
-                           * dot(c[i][j][k], weight_v);
-                }
-        return accum;
+    ```cpp filename="perlin.h | Perlin with random unit vectors"
+    class perlin {
+      public:
+        perlin() {
+            for (int i = 0; i < point_count; i++) {
+                randvec[i] = unit_vector(vec3::random(-1,1));
+            }
+            perlin_generate_perm(perm_x);
+            perlin_generate_perm(perm_y);
+            perlin_generate_perm(perm_z);
+        }
+
+        double noise(const point3& p) const {
+            auto u = p.x() - std::floor(p.x());
+            auto v = p.y() - std::floor(p.y());
+            auto w = p.z() - std::floor(p.z());
+            auto i = int(std::floor(p.x()));
+            auto j = int(std::floor(p.y()));
+            auto k = int(std::floor(p.z()));
+            vec3 c[2][2][2];
+            for (int di=0; di < 2; di++)
+                for (int dj=0; dj < 2; dj++)
+                    for (int dk=0; dk < 2; dk++)
+                        c[di][dj][dk] = randvec[
+                            perm_x[(i+di) & 255] ^ perm_y[(j+dj) & 255] ^ perm_z[(k+dk) & 255]
+                        ];
+            return perlin_interp(c, u, v, w);
+        }
+
+      private:
+        static const int point_count = 256;
+        vec3 randvec[point_count];
+        int perm_x[point_count];
+        int perm_y[point_count];
+        int perm_z[point_count];
+
+        static double perlin_interp(const vec3 c[2][2][2], double u, double v, double w) {
+            auto uu = u*u*(3-2*u);
+            auto vv = v*v*(3-2*v);
+            auto ww = w*w*(3-2*w);
+            auto accum = 0.0;
+            for (int i=0; i<2; i++)
+                for (int j=0; j<2; j++)
+                    for (int k=0; k<2; k++) {
+                        vec3 weight_v(u-i, v-j, w-k);
+                        accum += (i*uu + (1-i)*(1-uu))
+                               * (j*vv + (1-j)*(1-vv))
+                               * (k*ww + (1-k)*(1-ww))
+                               * dot(c[i][j][k], weight_v);
+                    }
+            return accum;
+        }
+
+        static void perlin_generate_perm(int* p) {
+            for (int i = 0; i < point_count; i++)
+                p[i] = i;
+            permute(p, point_count);
+        }
+
+        static void permute(int* p, int n) {
+            for (int i = n-1; i > 0; i--) {
+                int target = random_int(0, i);
+                int tmp = p[i];
+                p[i] = p[target];
+                p[target] = tmp;
+            }
+        }
+    };
+    ```
+  </Tab>
+</Tabs>
+
+The output of `perlin_interp` can return negative values. These negative values will be passed to the gamma-correction function, which expects only positive inputs. To fix this, we map the $[-1, +1]$ range to $[0, 1]$.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="texture.rs | NoiseTexture with range remapping"
+    impl Texture for NoiseTexture {
+        fn value(&self, _u: f64, _v: f64, p: &Point3) -> Color {
+            Color::new(1.0, 1.0, 1.0) * 0.5 * (1.0 + self.noise.noise(&(self.scale * *p)))
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="texture.h | noise_texture with range remapping"
+    color value(double u, double v, const point3& p) const override {
+        return color(1,1,1) * 0.5 * (1.0 + noise.noise(scale * p));
     }
     ```
   </Tab>
@@ -231,7 +470,7 @@ Instead of random scalars, we place random unit vectors at each lattice point. T
 
 ## Introducing Turbulence
 
-Turbulence sums multiple frequencies of noise (octaves) with decreasing amplitudes. This produces a more complex, fractal-like signal.
+Very often, a composite noise that has multiple summed frequencies is used. This is usually called turbulence, and is a sum of repeated calls to noise.
 
 <Tabs>
   <Tab label="Rust">
@@ -267,11 +506,33 @@ Turbulence sums multiple frequencies of noise (octaves) with decreasing amplitud
   </Tab>
 </Tabs>
 
+Used directly, turbulence gives a sort of camouflage netting appearance.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="texture.rs | NoiseTexture using turbulence"
+    impl Texture for NoiseTexture {
+        fn value(&self, _u: f64, _v: f64, p: &Point3) -> Color {
+            Color::new(1.0, 1.0, 1.0) * self.noise.turbulence(p, 7)
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="texture.h | noise_texture with turbulence"
+    color value(double u, double v, const point3& p) const override {
+        return color(1,1,1) * noise.turb(p, 7);
+    }
+    ```
+  </Tab>
+</Tabs>
+
 <Img src="img-2.14-perlin-turb.png" caption="Perlin texture with turbulence" />
 
 ## Adjusting the Phase
 
-Using turbulence directly gives a camouflage-like look. To get the classic marble appearance, we use it to perturb a phase in a sine function:
+However, usually turbulence is used indirectly. For example, the "hello world" of procedural solid textures is a simple marble-like texture. The basic idea is to make color proportional to something like a sine function, and use turbulence to adjust the phase (so it shifts $x$ in $\sin(x)$) which makes the stripes undulate.
 
 <Tabs>
   <Tab label="Rust">
@@ -284,7 +545,7 @@ Using turbulence directly gives a camouflage-like look. To get the classic marbl
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="texture.h | Marble-like noise"
+    ```cpp filename="texture.h | noise_texture with marbled texture"
     color value(double u, double v, const point3& p) const override {
         return color(.5, .5, .5) * (1 + std::sin(scale * p.z() + 10 * noise.turb(p, 7)));
     }

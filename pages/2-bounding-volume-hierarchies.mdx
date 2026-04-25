@@ -2,19 +2,37 @@
 
 ## The Key Idea
 
-Ray-object intersection is the main time sink in a ray tracer, and time is roughly linear in the number of objects. The idea with Bounding Volume Hierarchies (BVH) is to divide objects into subsets and wrap those subsets in a bounding volume. When checking if a ray hits anything, we first check if it hits the bounding volume; if it doesn't, we can skip all objects inside.
+The key idea of creating bounding volumes for a set of primitives is to find a volume that fully encloses (bounds) all the objects. For example, suppose you computed a bounding sphere of 10 objects. Any ray that misses the bounding sphere definitely misses all ten objects inside. If the ray hits the bounding sphere, then it might hit one of the ten objects. So the bounding code is always of the form:
 
-The key property we need is this: the bounding volume need not be tight — a larger box still works, just not as efficiently.
+```
+if (ray hits bounding object)
+    return whether ray hits bounded objects
+else
+    return false
+```
+
+A key thing is that we are *not* dividing the screen or the volume space. We are dividing the list of objects. Each object is in exactly one bounding volume, but bounding volumes can overlap.
 
 ## Hierarchies of Bounding Volumes
 
-We organize bounding volumes into a tree. We start with a bounding box for the whole scene, then recursively split it into smaller boxes containing subsets of objects. Each leaf in the tree holds one or a few primitives; interior nodes hold only bounding boxes.
+To make things sub-linear we need to make the bounding volumes hierarchical. For example, if we divided a set of objects into two groups, red and blue, and used rectangular bounding volumes, we'd have:
 
-To intersect the BVH, we start at the root and check each child's bounding box. If a ray misses a box, we prune the entire subtree beneath it. This turns a linear scan into a logarithmic one for random distributions of objects.
+```
+if (hits purple)
+    hit0 = hits blue enclosed objects
+    hit1 = hits red enclosed objects
+    if (hit0 or hit1)
+        return true and info of closer hit
+return false
+```
+
+The BVH forms a tree. The root is the bounding box for the whole scene. Each internal node is the bounding box of its children. Leaf nodes hold one or a few primitives. This turns a linear scan through every object into a traversal of a binary tree — typically logarithmic in the number of objects.
 
 ## Axis-Aligned Bounding Boxes (AABBs)
 
-We use axis-aligned bounding boxes (AABBs) because they are cheap to test against rays. An AABB is defined by two corner points: a minimum-coordinate corner and a maximum-coordinate corner.
+To get good performance we need a good division into subsets, and to traverse the BVH quickly we need intersection tests that are very fast. We use axis-aligned bounding rectangular parallelepipeds (axis-aligned bounding boxes, or AABBs) for this. All you need to know is that testing a ray against an AABB is fast, and that AABBs work well in practice.
+
+The slab method is based on the observation that an n-dimensional AABB is just the intersection of n axis-aligned intervals, often called "slabs". An interval is just the points between two endpoints, e.g., $x$ such that $3 \le x \le 5$. In 2D, two intervals stacked make a 2D AABB (a rectangle). In 3D, three intervals make an AABB.
 
 <Tabs>
   <Tab label="Rust">
@@ -39,6 +57,14 @@ We use axis-aligned bounding boxes (AABBs) because they are cheap to test agains
             }
         }
 
+        pub fn from_aabbs(box0: Aabb, box1: Aabb) -> Self {
+            Self {
+                x: Interval::from_intervals(box0.x, box1.x),
+                y: Interval::from_intervals(box0.y, box1.y),
+                z: Interval::from_intervals(box0.z, box1.z),
+            }
+        }
+
         pub fn axis_interval(&self, n: usize) -> Interval {
             match n {
                 0 => self.x,
@@ -59,13 +85,12 @@ We use axis-aligned bounding boxes (AABBs) because they are cheap to test agains
         aabb() {}
 
         aabb(const interval& x, const interval& y, const interval& z)
-          : x(x), y(y), z(z) { pad_to_minimums(); }
+          : x(x), y(y), z(z) {}
 
         aabb(const point3& a, const point3& b) {
             x = interval(std::fmin(a[0],b[0]), std::fmax(a[0],b[0]));
             y = interval(std::fmin(a[1],b[1]), std::fmax(a[1],b[1]));
             z = interval(std::fmin(a[2],b[2]), std::fmax(a[2],b[2]));
-            pad_to_minimums();
         }
 
         aabb(const aabb& box0, const aabb& box1) {
@@ -78,23 +103,6 @@ We use axis-aligned bounding boxes (AABBs) because they are cheap to test agains
             if (n == 1) return y;
             if (n == 2) return z;
             return x;
-        }
-
-        int longest_axis() const {
-            if (x.size() > y.size())
-                return x.size() > z.size() ? 0 : 2;
-            else
-                return y.size() > z.size() ? 1 : 2;
-        }
-
-        static const aabb empty, universe;
-
-      private:
-        void pad_to_minimums() {
-            double delta = 0.0001;
-            if (x.size() < delta) x = x.expand(delta);
-            if (y.size() < delta) y = y.expand(delta);
-            if (z.size() < delta) z = z.expand(delta);
         }
     };
     ```

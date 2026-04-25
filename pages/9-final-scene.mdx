@@ -1,15 +1,18 @@
 # A Scene Testing All New Features
 
-The final scene exercises every feature introduced in this book. It's a large scene — thousands of objects — so the BVH is essential for reasonable performance.
+Let's put it all together and make the image on the cover of this book. There's nothing really new here; it's just a big scene that exercises everything we've built.
 
 The scene contains:
-- Thousands of small spheres on the ground, arranged in a flat grid
+- A large ground made from many random-colored boxes
 - A single motion-blurred sphere
 - A sphere with an earth image texture
 - A sphere with the Perlin noise texture (marble-like)
-- Two quads forming a light source on the ceiling
-- A glass sphere
-- A box of spheres rendered through a BVH (a "cloud" of spheres)
+- A quad light source
+- A glass sphere (dielectric)
+- A metal sphere
+- A sphere with subsurface scattering (glass boundary + constant medium)
+- Global atmospheric fog (constant medium over the entire scene)
+- A rotating, translated cloud of white spheres
 
 <Tabs>
   <Tab label="Rust">
@@ -204,8 +207,48 @@ The scene contains:
   </Tab>
 </Tabs>
 
-<Img src="img-2.23-book2-final.jpg" caption="Final scene" />
+The `final_scene()` function takes three parameters — `image_width`, `samples_per_pixel`, and `max_depth` — so you can quickly render a low-quality preview or a full high-quality image. The `main()` function below selects which scene to render; setting the switch to case 9 renders the full final scene:
 
-The final render showcases the complete feature set: motion blur, BVH acceleration, checker and image and Perlin textures, quads, area lights, instances, and participating media all working together.
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Choosing a scene"
+    fn main() {
+        match 9 {
+            1 => bouncing_spheres(),
+            2 => checkered_spheres(),
+            3 => earth(),
+            4 => perlin_spheres(),
+            5 => quads(),
+            6 => simple_light(),
+            7 => cornell_box(),
+            8 => cornell_smoke(),
+            9 => final_scene(800, 10000, 40),
+            _ => final_scene(400, 250, 4),
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Choosing a scene"
+    int main() {
+        switch (9) {
+            case 1:  bouncing_spheres();          break;
+            case 2:  checkered_spheres();         break;
+            case 3:  earth();                     break;
+            case 4:  perlin_spheres();            break;
+            case 5:  quads();                     break;
+            case 6:  simple_light();              break;
+            case 7:  cornell_box();               break;
+            case 8:  cornell_smoke();             break;
+            case 9:  final_scene(800, 10000, 40); break;
+            default: final_scene(400,  250,  4);  break;
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Fig src="img-2.23-book2-final.jpg" caption="Final scene" />
 
 Congratulations — you now have a "real" ray tracer! The features introduced in this book are the foundation of most production path tracers. From here, further reading might cover importance sampling, spectral rendering, bidirectional path tracing, and many other advanced topics.

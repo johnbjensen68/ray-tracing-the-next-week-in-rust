@@ -1,14 +1,14 @@
 # Instances
 
-Instances let us place the same geometric object multiple times in a scene with different transformations (translation, rotation, scaling) without duplicating the geometry. The trick is to apply the inverse transform to the ray before testing intersection.
+The Cornell box usually has two blocks in it. These two blocks are boxes that are rotated slightly relative to the walls. Having these as separate classes is a pain, so what is usually done in a ray tracer is to have an *instance* of a geometric primitive. An instance is a geometric primitive that has been moved or rotated somehow. This is especially easy in ray tracing because we don't move the object; we move the ray. For example, if you want to move a sphere to position `(1,2,3)`, you can instead subtract `(1,2,3)` from the ray origin before calling the sphere's `hit()` method. That's what an instance is: a wrapper around a hittable that transforms the ray going in and transforms the intersection coming out.
 
 ## Instance Translation
 
-Translation is the simplest transform. To translate a hittable by offset `T`, we subtract `T` from the ray origin before hitting, then add `T` back to the hit point.
+The code for a translation (also called a *move*) instance is straightforward:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="instance.rs | Translate"
+    ```rust filename="hittable.rs | Translate instance"
     pub struct Translate {
         object: Arc<dyn Hittable>,
         offset: Vec3,
@@ -24,12 +24,13 @@ Translation is the simplest transform. To translate a hittable by offset `T`, we
 
     impl Hittable for Translate {
         fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
-            // Move ray backwards by offset
+            // Move the ray backwards by the offset
             let offset_r = Ray::new(r.origin - self.offset, r.direction, r.time);
+            // Determine whether an intersection exists along the offset ray (and if so, where)
             if !self.object.hit(&offset_r, ray_t, rec) {
                 return false;
             }
-            // Move hit point forward by offset
+            // Move the intersection point forwards by the offset
             rec.p += self.offset;
             true
         }
@@ -54,12 +55,18 @@ Translation is the simplest transform. To translate a hittable by offset `T`, we
         bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
             // Move the ray backwards by the offset
             ray offset_r(r.origin() - offset, r.direction(), r.time());
-            if (!object->hit(offset_r, ray_t, rec)) return false;
+
+            // Determine whether an intersection exists along the offset ray (and if so, where)
+            if (!object->hit(offset_r, ray_t, rec))
+                return false;
+
+            // Move the intersection point forwards by the offset
             rec.p += offset;
             return true;
         }
 
         aabb bounding_box() const override { return bbox; }
+
       private:
         shared_ptr<hittable> object;
         vec3 offset;
@@ -69,13 +76,22 @@ Translation is the simplest transform. To translate a hittable by offset `T`, we
   </Tab>
 </Tabs>
 
-## Instance Rotation
+## Instance Rotation Y
 
-Rotation is more involved. We rotate the ray by the negative angle, test intersection, then rotate the normal and hit point back. We support Y-axis rotation here, which is what you need to turn the Cornell box blocks.
+Rotation is a bit harder to understand and implement. A common graphics trick is to apply all rotations about the `x`, `y`, and `z` axes. These rotations are in some sense axis-aligned. First, let's just rotate about the y-axis. For a rotation of angle $\theta$ the y-axis rotation formulas are:
+
+$$
+x' =  \cos(\theta) \cdot x + \sin(\theta) \cdot z
+$$
+$$
+z' = -\sin(\theta) \cdot x + \cos(\theta) \cdot z
+$$
+
+The great thing is that it works for any axis-aligned rotation — you just rotate the rays. For y-rotation we transform the ray, run the hit function, then transform the result back:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="instance.rs | RotateY"
+    ```rust filename="hittable.rs | rotate_y"
     pub struct RotateY {
         object: Arc<dyn Hittable>,
         sin_theta: f64,
@@ -88,7 +104,7 @@ Rotation is more involved. We rotate the ray by the negative angle, test interse
             let radians = angle.to_radians();
             let sin_theta = radians.sin();
             let cos_theta = radians.cos();
-            let src_bbox = object.bounding_box();
+            let bbox = object.bounding_box();
 
             let mut min = Point3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
             let mut max = Point3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
@@ -96,12 +112,15 @@ Rotation is more involved. We rotate the ray by the negative angle, test interse
             for i in 0..2 {
                 for j in 0..2 {
                     for k in 0..2 {
-                        let x = i as f64 * src_bbox.x.max + (1 - i) as f64 * src_bbox.x.min;
-                        let y = j as f64 * src_bbox.y.max + (1 - j) as f64 * src_bbox.y.min;
-                        let z = k as f64 * src_bbox.z.max + (1 - k) as f64 * src_bbox.z.min;
+                        let x = i as f64 * bbox.x.max + (1 - i) as f64 * bbox.x.min;
+                        let y = j as f64 * bbox.y.max + (1 - j) as f64 * bbox.y.min;
+                        let z = k as f64 * bbox.z.max + (1 - k) as f64 * bbox.z.min;
+
                         let newx =  cos_theta * x + sin_theta * z;
                         let newz = -sin_theta * x + cos_theta * z;
+
                         let tester = Vec3::new(newx, y, newz);
+
                         for c in 0..3 {
                             min[c] = min[c].min(tester[c]);
                             max[c] = max[c].max(tester[c]);
@@ -113,36 +132,41 @@ Rotation is more involved. We rotate the ray by the negative angle, test interse
             let bbox = Aabb::from_points(min, max);
             Self { object, sin_theta, cos_theta, bbox }
         }
-
-        fn rotate_point(p: Point3, sin_theta: f64, cos_theta: f64) -> Point3 {
-            Point3::new(
-                cos_theta * p.x() + sin_theta * p.z(),
-                p.y(),
-                -sin_theta * p.x() + cos_theta * p.z(),
-            )
-        }
     }
 
     impl Hittable for RotateY {
         fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
             // Transform the ray from world space to object space.
             let origin = Point3::new(
-                self.cos_theta * r.origin.x() - self.sin_theta * r.origin.z(),
+                (self.cos_theta * r.origin.x()) - (self.sin_theta * r.origin.z()),
                 r.origin.y(),
-                self.sin_theta * r.origin.x() + self.cos_theta * r.origin.z(),
+                (self.sin_theta * r.origin.x()) + (self.cos_theta * r.origin.z()),
             );
             let direction = Vec3::new(
-                self.cos_theta * r.direction.x() - self.sin_theta * r.direction.z(),
+                (self.cos_theta * r.direction.x()) - (self.sin_theta * r.direction.z()),
                 r.direction.y(),
-                self.sin_theta * r.direction.x() + self.cos_theta * r.direction.z(),
+                (self.sin_theta * r.direction.x()) + (self.cos_theta * r.direction.z()),
             );
+
             let rotated_r = Ray::new(origin, direction, r.time);
+
+            // Determine whether an intersection exists in object space (and if so, where).
             if !self.object.hit(&rotated_r, ray_t, rec) {
                 return false;
             }
+
             // Transform the intersection from object space back to world space.
-            rec.p = Self::rotate_point(rec.p, self.sin_theta, self.cos_theta);
-            rec.normal = Self::rotate_point(rec.normal.into(), self.sin_theta, self.cos_theta).into();
+            rec.p = Point3::new(
+                (self.cos_theta * rec.p.x()) + (self.sin_theta * rec.p.z()),
+                rec.p.y(),
+                (-self.sin_theta * rec.p.x()) + (self.cos_theta * rec.p.z()),
+            );
+            rec.normal = Vec3::new(
+                (self.cos_theta * rec.normal.x()) + (self.sin_theta * rec.normal.z()),
+                rec.normal.y(),
+                (-self.sin_theta * rec.normal.x()) + (self.cos_theta * rec.normal.z()),
+            );
+
             true
         }
 
@@ -201,8 +225,12 @@ Rotation is more involved. We rotate the ray by the negative angle, test interse
                 r.direction().y(),
                 (sin_theta * r.direction().x()) + (cos_theta * r.direction().z())
             );
+
             ray rotated_r(origin, direction, r.time());
-            if (!object->hit(rotated_r, ray_t, rec)) return false;
+
+            // Determine whether an intersection exists in object space (and if so, where).
+            if (!object->hit(rotated_r, ray_t, rec))
+                return false;
 
             // Transform the intersection from object space back to world space.
             rec.p = point3(
@@ -215,6 +243,7 @@ Rotation is more involved. We rotate the ray by the negative angle, test interse
                 rec.normal.y(),
                 (-sin_theta * rec.normal.x()) + (cos_theta * rec.normal.z())
             );
+
             return true;
         }
 
@@ -229,25 +258,27 @@ Rotation is more involved. We rotate the ray by the negative angle, test interse
   </Tab>
 </Tabs>
 
-With translation and rotation, we can place the two blocks in the Cornell box at the correct positions and angles to match the classic render.
+## A Cornell Box Scene with Blocks
+
+Now we can add the two boxes to the Cornell box scene. The tall box is rotated 15 degrees clockwise, and the short box is rotated 18 degrees counter-clockwise:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Cornell box blocks"
-    let box1 = make_box(Point3::ZERO, Point3::new(165.0, 330.0, 165.0), white.clone());
-    let box1 = Arc::new(RotateY::new(Arc::new(box1), 15.0));
-    let box1 = Arc::new(Translate::new(box1, Vec3::new(265.0, 0.0, 295.0)));
+    ```rust filename="main.rs | Cornell box with two blocks"
+    let box1 = make_box(Point3::new(0.0,0.0,0.0), Point3::new(165.0,330.0,165.0), white.clone());
+    let box1 = Arc::new(RotateY::new(Arc::new(box1),  15.0));
+    let box1 = Arc::new(Translate::new(box1, Vec3::new(265.0,0.0,295.0)));
     world.add(box1);
 
-    let box2 = make_box(Point3::ZERO, Point3::new(165.0, 165.0, 165.0), white.clone());
+    let box2 = make_box(Point3::new(0.0,0.0,0.0), Point3::new(165.0,165.0,165.0), white.clone());
     let box2 = Arc::new(RotateY::new(Arc::new(box2), -18.0));
-    let box2 = Arc::new(Translate::new(box2, Vec3::new(130.0, 0.0, 65.0)));
+    let box2 = Arc::new(Translate::new(box2, Vec3::new(130.0,0.0,65.0)));
     world.add(box2);
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="main.cc | Cornell box blocks"
+    ```cpp filename="main.cc | Cornell box with two blocks"
     shared_ptr<hittable> box1 = box(point3(0,0,0), point3(165,330,165), white);
     box1 = make_shared<rotate_y>(box1,  15);
     box1 = make_shared<translate>(box1, vec3(265,0,295));
@@ -261,6 +292,6 @@ With translation and rotation, we can place the two blocks in the Cornell box at
   </Tab>
 </Tabs>
 
-<Img src="img-2.20-cornell-blocks.png" caption="Cornell box with two blocks" />
+This produces the standard Cornell box image:
 
-<Img src="img-2.21-cornell-standard.png" caption="Standard Cornell box scene" />
+<Fig src="img-2.20-cornell-blocks.png" caption="Standard Cornell box" />
