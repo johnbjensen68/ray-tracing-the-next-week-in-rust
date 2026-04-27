@@ -1,48 +1,100 @@
 # Quadrilaterals
 
+We've managed to get more than half way through this three-book series using spheres as our only geometric primitive. Time to add our second primitive: the quadrilateral.
+
 ## Defining the Quadrilateral
 
-We introduce a second geometric primitive: the parallelogram (which we'll call a quad). A quad is defined by a corner point `Q`, and two edge vectors `u` and `v`. The four corners are `Q`, `Q+u`, `Q+v`, and `Q+u+v`.
+The new primitive will be a parallelogram — a quadrilateral with parallel opposite sides. Three values define it: a corner point **Q**, a vector **u** for one side, and a vector **v** for the other side. The four corners are **Q**, **Q+u**, **Q+v**, and **Q+u+v**.
+
+Quads are flat, so their bounding box will have zero thickness in one dimension if the quad lies exactly in an axis-aligned plane. This causes numerical problems with the ray-AABB test. We guard against it by padding any thin dimension of the AABB up to a small minimum.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="quad.rs | Quad struct"
-    pub struct Quad {
-        q: Point3,
-        u: Vec3,
-        v: Vec3,
-        mat: Arc<dyn Material>,
-        bbox: Aabb,
-        // derived values for hit testing
-        normal: Vec3,
-        d: f64,
-        w: Vec3,
-    }
-
-    impl Quad {
-        pub fn new(q: Point3, u: Vec3, v: Vec3, mat: Arc<dyn Material>) -> Self {
-            let n = u.cross(v);
-            let normal = n.unit_vector();
-            let d = normal.dot(q);
-            let w = n / n.dot(n);
-            let bbox = Aabb::from_points(q, q + u + v).pad();
-            Self { q, u, v, mat, bbox, normal, d, w }
+    ```rust filename="aabb.rs | AABB pad_to_minimums"
+    impl Aabb {
+        pub fn pad_to_minimums(mut self) -> Self {
+            let delta = 0.0001;
+            if self.x.size() < delta { self.x = self.x.expand(delta); }
+            if self.y.size() < delta { self.y = self.y.expand(delta); }
+            if self.z.size() < delta { self.z = self.z.expand(delta); }
+            self
         }
     }
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="quad.h | quad class"
+    ```cpp filename="aabb.h | New aabb::pad_to_minimums() method"
+    class aabb {
+      public:
+        aabb(const interval& x, const interval& y, const interval& z)
+          : x(x), y(y), z(z) {
+            pad_to_minimums();
+        }
+
+        aabb(const point3& a, const point3& b) {
+            x = (a[0] <= b[0]) ? interval(a[0], b[0]) : interval(b[0], a[0]);
+            y = (a[1] <= b[1]) ? interval(a[1], b[1]) : interval(b[1], a[1]);
+            z = (a[2] <= b[2]) ? interval(a[2], b[2]) : interval(b[2], a[2]);
+            pad_to_minimums();
+        }
+        // ...
+      private:
+        void pad_to_minimums() {
+            double delta = 0.0001;
+            if (x.size() < delta) x = x.expand(delta);
+            if (y.size() < delta) y = y.expand(delta);
+            if (z.size() < delta) z = z.expand(delta);
+        }
+    };
+    ```
+  </Tab>
+</Tabs>
+
+We start with a stub quad class that computes a bounding box from the two diagonals of the parallelogram, and returns `false` for `hit()` until we implement the intersection test.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="quad.rs | Initial Quad struct"
+    pub struct Quad {
+        q: Point3,
+        u: Vec3,
+        v: Vec3,
+        mat: Arc<dyn Material>,
+        bbox: Aabb,
+    }
+
+    impl Quad {
+        pub fn new(q: Point3, u: Vec3, v: Vec3, mat: Arc<dyn Material>) -> Self {
+            let bbox = Aabb::from_aabbs(
+                Aabb::from_points(q, q + u + v),
+                Aabb::from_points(q + u, q + v),
+            ).pad_to_minimums();
+            Self { q, u, v, mat, bbox }
+        }
+    }
+
+    impl Hittable for Quad {
+        fn bounding_box(&self) -> Aabb { self.bbox }
+
+        fn hit(&self, _r: &Ray, _ray_t: Interval, _rec: &mut HitRecord) -> bool {
+            false // to be implemented
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="quad.h | Initial quadrilateral class"
+    #ifndef QUAD_H
+    #define QUAD_H
+
+    #include "hittable.h"
+
     class quad : public hittable {
       public:
         quad(const point3& Q, const vec3& u, const vec3& v, shared_ptr<material> mat)
-          : Q(Q), u(u), v(v), mat(mat)
-        {
-            auto n = cross(u, v);
-            normal = unit_vector(n);
-            D = dot(normal, Q);
-            w = n / dot(n, n);
+          : Q(Q), u(u), v(v), mat(mat) {
             set_bounding_box();
         }
 
@@ -54,10 +106,79 @@ We introduce a second geometric primitive: the parallelogram (which we'll call a
 
         aabb bounding_box() const override { return bbox; }
 
-        bool hit(const ray& r, interval ray_t, hit_record& rec) const override;
+        bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
+            return false;
+        }
 
-        virtual bool is_interior(double a, double b, hit_record& rec) const;
+      private:
+        point3 Q;
+        vec3 u, v;
+        shared_ptr<material> mat;
+        aabb bbox;
+    };
 
+    #endif
+    ```
+  </Tab>
+</Tabs>
+
+## Ray-Plane Intersection
+
+A quad lies in a plane. We first find where the ray intersects the plane, then check if that point is inside the quad's boundaries.
+
+The implicit plane formula is $\mathbf{n} \cdot \mathbf{v} = D$, where **n** is the plane normal and $D$ is a scalar. Substituting the ray $\mathbf{R}(t) = \mathbf{P} + t\mathbf{d}$:
+
+$$t = \frac{D - \mathbf{n} \cdot \mathbf{P}}{\mathbf{n} \cdot \mathbf{d}}$$
+
+If $\mathbf{n} \cdot \mathbf{d} = 0$ the ray is parallel to the plane and we record a miss.
+
+## Finding the Plane That Contains a Given Quadrilateral
+
+Given **Q**, **u**, and **v**, the normal is $\mathbf{n} = \operatorname{unit\_vector}(\mathbf{u} \times \mathbf{v})$ and $D = \mathbf{n} \cdot \mathbf{Q}$. We cache these at construction time, along with the vector $\mathbf{w} = (\mathbf{u} \times \mathbf{v}) / ((\mathbf{u} \times \mathbf{v}) \cdot (\mathbf{u} \times \mathbf{v}))$ which we'll need for the planar coordinate test.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="quad.rs | Quad with cached plane values"
+    pub struct Quad {
+        q: Point3,
+        u: Vec3,
+        v: Vec3,
+        mat: Arc<dyn Material>,
+        bbox: Aabb,
+        normal: Vec3,
+        d: f64,
+        w: Vec3,
+    }
+
+    impl Quad {
+        pub fn new(q: Point3, u: Vec3, v: Vec3, mat: Arc<dyn Material>) -> Self {
+            let n = u.cross(v);
+            let normal = n.unit_vector();
+            let d = normal.dot(q);
+            let w = n / n.dot(n);
+            let bbox = Aabb::from_aabbs(
+                Aabb::from_points(q, q + u + v),
+                Aabb::from_points(q + u, q + v),
+            ).pad_to_minimums();
+            Self { q, u, v, mat, bbox, normal, d, w }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="quad.h | Quad with cached plane values"
+    class quad : public hittable {
+      public:
+        quad(const point3& Q, const vec3& u, const vec3& v, shared_ptr<material> mat)
+          : Q(Q), u(u), v(v), mat(mat) {
+            auto n = cross(u, v);
+            normal = unit_vector(n);
+            D = dot(normal, Q);
+            w = n / dot(n, n);
+            set_bounding_box();
+        }
+        // ...
       private:
         point3 Q;
         vec3 u, v;
@@ -71,67 +192,66 @@ We introduce a second geometric primitive: the parallelogram (which we'll call a
   </Tab>
 </Tabs>
 
-## Ray-Plane Intersection
-
-A quad lies in a plane. We first find where the ray intersects the plane containing the quad, then check if the hit point is inside the quad's bounds.
-
-The plane equation is `dot(normal, p) = d`. Substituting the ray equation `p = origin + t * direction`:
-
-```
-t = (d - dot(normal, origin)) / dot(normal, direction)
-```
+With the plane values cached, the ray-plane intersection is straightforward:
 
 <Tabs>
   <Tab label="Rust">
     ```rust filename="quad.rs | Ray-plane intersection"
-    impl Hittable for Quad {
-        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
-            let denom = self.normal.dot(r.direction);
-            if denom.abs() < 1e-8 {
-                return false; // ray is parallel to plane
-            }
-            let t = (self.d - self.normal.dot(r.origin)) / denom;
-            if !ray_t.contains(t) {
-                return false;
-            }
-            let intersection = r.at(t);
-            // ... check if inside quad ...
-            true
+    fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+        let denom = self.normal.dot(r.direction());
+        if denom.abs() < 1e-8 {
+            return false; // ray is parallel to plane
         }
+        let t = (self.d - self.normal.dot(r.origin())) / denom;
+        if !ray_t.contains(t) {
+            return false;
+        }
+        let intersection = r.at(t);
+        // ...interior test to follow
+        rec.t = t;
+        rec.p = intersection;
+        rec.mat = self.mat.clone();
+        rec.set_face_normal(r, self.normal);
+        true
     }
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="quad.h | hit function"
+    ```cpp filename="quad.h | Ray-plane intersection in hit()"
     bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
         auto denom = dot(normal, r.direction());
         if (std::fabs(denom) < 1e-8) return false;
+
         auto t = (D - dot(normal, r.origin())) / denom;
         if (!ray_t.contains(t)) return false;
+
         auto intersection = r.at(t);
-        // ... check if inside quad ...
+        rec.t = t;
+        rec.p = intersection;
+        rec.mat = mat;
+        rec.set_face_normal(r, normal);
         return true;
     }
     ```
   </Tab>
 </Tabs>
 
-## Finding the Plane That Contains a Given Quadrilateral
-
-The plane containing the quad is uniquely determined by its corner point `Q` and the cross product of its edge vectors `u` and `v`. We compute and cache the plane normal and offset at construction time.
-
 ## Orienting Points on The Plane
 
-Once we have the intersection point on the plane, we need to determine whether it lies within the parallelogram. We decompose the vector from `Q` to the hit point into components along `u` and `v`.
+Once we have the intersection point on the plane, we need to determine whether it lies within the parallelogram. We express the vector from **Q** to the hit point as a linear combination of **u** and **v**, and check that both coefficients are in $[0,1]$.
 
 ## Deriving the Planar Coordinates
 
-Using the precomputed vector `w = cross(u,v) / dot(cross(u,v), cross(u,v))`, we compute the planar coordinates `(alpha, beta)` of the hit point:
+Using the precomputed $\mathbf{w}$ vector, we compute planar coordinates $\alpha$ and $\beta$:
+
+$$\alpha = \mathbf{w} \cdot (\mathbf{p} \times \mathbf{v}), \qquad \beta = \mathbf{w} \cdot (\mathbf{u} \times \mathbf{p})$$
+
+where $\mathbf{p}$ is the vector from **Q** to the intersection point.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="quad.rs | planar coordinates"
+    ```rust filename="quad.rs | Computing planar coordinates"
     let planar_hitpt_vector = intersection - self.q;
     let alpha = self.w.dot(planar_hitpt_vector.cross(self.v));
     let beta  = self.w.dot(self.u.cross(planar_hitpt_vector));
@@ -139,7 +259,7 @@ Using the precomputed vector `w = cross(u,v) / dot(cross(u,v), cross(u,v))`, we 
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="quad.h | planar coordinates"
+    ```cpp filename="quad.h | Computing planar coordinates"
     auto planar_hitpt_vector = intersection - Q;
     auto alpha = dot(w, cross(planar_hitpt_vector, v));
     auto beta  = dot(w, cross(u, planar_hitpt_vector));
@@ -147,13 +267,13 @@ Using the precomputed vector `w = cross(u,v) / dot(cross(u,v), cross(u,v))`, we 
   </Tab>
 </Tabs>
 
-## Interior Testing of The Intersection Using UV Coordinates
+## Is the Point Inside the Quad?
 
-The hit point is inside the parallelogram if and only if both `alpha` and `beta` are in the interval [0, 1]. These coordinates also serve as UV texture coordinates.
+The hit point lies inside the parallelogram if and only if both $\alpha \in [0,1]$ and $\beta \in [0,1]$.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="quad.rs | interior test"
+    ```rust filename="quad.rs | Interior test"
     fn is_interior(alpha: f64, beta: f64, rec: &mut HitRecord) -> bool {
         let unit = Interval::new(0.0, 1.0);
         if !unit.contains(alpha) || !unit.contains(beta) {
@@ -180,19 +300,243 @@ The hit point is inside the parallelogram if and only if both `alpha` and `beta`
   </Tab>
 </Tabs>
 
+## Texture Coordinates for Quads
+
+The planar coordinates $(\alpha, \beta)$ serve directly as UV texture coordinates. The `is_interior` method stores them in `rec.u` and `rec.v` before returning true.
+
+## The Complete Quad Class
+
+Putting it all together:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="quad.rs | Complete Quad implementation"
+    pub struct Quad {
+        q: Point3,
+        u: Vec3,
+        v: Vec3,
+        mat: Arc<dyn Material>,
+        bbox: Aabb,
+        normal: Vec3,
+        d: f64,
+        w: Vec3,
+    }
+
+    impl Quad {
+        pub fn new(q: Point3, u: Vec3, v: Vec3, mat: Arc<dyn Material>) -> Self {
+            let n = u.cross(v);
+            let normal = n.unit_vector();
+            let d = normal.dot(q);
+            let w = n / n.dot(n);
+            let bbox = Aabb::from_aabbs(
+                Aabb::from_points(q, q + u + v),
+                Aabb::from_points(q + u, q + v),
+            ).pad_to_minimums();
+            Self { q, u, v, mat, bbox, normal, d, w }
+        }
+
+        fn is_interior(alpha: f64, beta: f64, rec: &mut HitRecord) -> bool {
+            let unit = Interval::new(0.0, 1.0);
+            if !unit.contains(alpha) || !unit.contains(beta) { return false; }
+            rec.u = alpha;
+            rec.v = beta;
+            true
+        }
+    }
+
+    impl Hittable for Quad {
+        fn bounding_box(&self) -> Aabb { self.bbox }
+
+        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+            let denom = self.normal.dot(r.direction());
+            if denom.abs() < 1e-8 { return false; }
+            let t = (self.d - self.normal.dot(r.origin())) / denom;
+            if !ray_t.contains(t) { return false; }
+            let intersection = r.at(t);
+            let planar_hitpt_vector = intersection - self.q;
+            let alpha = self.w.dot(planar_hitpt_vector.cross(self.v));
+            let beta  = self.w.dot(self.u.cross(planar_hitpt_vector));
+            if !Self::is_interior(alpha, beta, rec) { return false; }
+            rec.t = t;
+            rec.p = intersection;
+            rec.mat = self.mat.clone();
+            rec.set_face_normal(r, self.normal);
+            true
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="quad.h | Complete quad class"
+    #ifndef QUAD_H
+    #define QUAD_H
+
+    #include "hittable.h"
+
+    class quad : public hittable {
+      public:
+        quad(const point3& Q, const vec3& u, const vec3& v, shared_ptr<material> mat)
+          : Q(Q), u(u), v(v), mat(mat) {
+            auto n = cross(u, v);
+            normal = unit_vector(n);
+            D = dot(normal, Q);
+            w = n / dot(n, n);
+            set_bounding_box();
+        }
+
+        virtual void set_bounding_box() {
+            auto bbox_diagonal1 = aabb(Q, Q + u + v);
+            auto bbox_diagonal2 = aabb(Q + u, Q + v);
+            bbox = aabb(bbox_diagonal1, bbox_diagonal2);
+        }
+
+        aabb bounding_box() const override { return bbox; }
+
+        bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
+            auto denom = dot(normal, r.direction());
+            if (std::fabs(denom) < 1e-8) return false;
+            auto t = (D - dot(normal, r.origin())) / denom;
+            if (!ray_t.contains(t)) return false;
+            auto intersection = r.at(t);
+            auto planar_hitpt_vector = intersection - Q;
+            auto alpha = dot(w, cross(planar_hitpt_vector, v));
+            auto beta  = dot(w, cross(u, planar_hitpt_vector));
+            if (!is_interior(alpha, beta, rec)) return false;
+            rec.t = t;
+            rec.p = intersection;
+            rec.mat = mat;
+            rec.set_face_normal(r, normal);
+            return true;
+        }
+
+      protected:
+        virtual bool is_interior(double a, double b, hit_record& rec) const {
+            interval unit_interval = interval(0, 1);
+            if (!unit_interval.contains(a) || !unit_interval.contains(b))
+                return false;
+            rec.u = a;
+            rec.v = b;
+            return true;
+        }
+
+      private:
+        point3 Q;
+        vec3 u, v;
+        vec3 w;
+        shared_ptr<material> mat;
+        aabb bbox;
+        vec3 normal;
+        double D;
+    };
+
+    #endif
+    ```
+  </Tab>
+</Tabs>
+
+Here are five colored quads to test the implementation:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Scene with five colored quads"
+    fn quads() {
+        let mut world = HittableList::new();
+
+        let left_red     = Arc::new(Lambertian::new(Color::new(1.0, 0.2, 0.2)));
+        let back_green   = Arc::new(Lambertian::new(Color::new(0.2, 1.0, 0.2)));
+        let right_blue   = Arc::new(Lambertian::new(Color::new(0.2, 0.2, 1.0)));
+        let upper_orange = Arc::new(Lambertian::new(Color::new(1.0, 0.5, 0.0)));
+        let lower_teal   = Arc::new(Lambertian::new(Color::new(0.2, 0.8, 0.8)));
+
+        world.add(Arc::new(Quad::new(Point3::new(-3.0,-2.0, 5.0), Vec3::new(0.0, 0.0,-4.0), Vec3::new(0.0, 4.0, 0.0), left_red)));
+        world.add(Arc::new(Quad::new(Point3::new(-2.0,-2.0, 0.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(0.0, 4.0, 0.0), back_green)));
+        world.add(Arc::new(Quad::new(Point3::new( 3.0,-2.0, 1.0), Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 4.0, 0.0), right_blue)));
+        world.add(Arc::new(Quad::new(Point3::new(-2.0, 3.0, 1.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 4.0), upper_orange)));
+        world.add(Arc::new(Quad::new(Point3::new(-2.0,-3.0, 5.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(0.0, 0.0,-4.0), lower_teal)));
+
+        let mut cam = Camera::new();
+        cam.aspect_ratio      = 1.0;
+        cam.image_width       = 400;
+        cam.samples_per_pixel = 100;
+        cam.max_depth         = 50;
+        cam.vfov              = 80.0;
+        cam.lookfrom          = Point3::new(0.0, 0.0, 9.0);
+        cam.lookat            = Point3::new(0.0, 0.0, 0.0);
+        cam.vup               = Vec3::new(0.0, 1.0, 0.0);
+        cam.defocus_angle     = 0.0;
+        cam.render(&world);
+    }
+
+    fn main() {
+        match 5 {
+            1 => bouncing_spheres(),
+            2 => checkered_spheres(),
+            3 => earth(),
+            4 => perlin_spheres(),
+            5 => quads(),
+            _ => {}
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Scene with five colored quads"
+    void quads() {
+        hittable_list world;
+
+        auto left_red     = make_shared<lambertian>(color(1.0, 0.2, 0.2));
+        auto back_green   = make_shared<lambertian>(color(0.2, 1.0, 0.2));
+        auto right_blue   = make_shared<lambertian>(color(0.2, 0.2, 1.0));
+        auto upper_orange = make_shared<lambertian>(color(1.0, 0.5, 0.0));
+        auto lower_teal   = make_shared<lambertian>(color(0.2, 0.8, 0.8));
+
+        world.add(make_shared<quad>(point3(-3,-2, 5), vec3(0, 0,-4), vec3(0, 4, 0), left_red));
+        world.add(make_shared<quad>(point3(-2,-2, 0), vec3(4, 0, 0), vec3(0, 4, 0), back_green));
+        world.add(make_shared<quad>(point3( 3,-2, 1), vec3(0, 0, 4), vec3(0, 4, 0), right_blue));
+        world.add(make_shared<quad>(point3(-2, 3, 1), vec3(4, 0, 0), vec3(0, 0, 4), upper_orange));
+        world.add(make_shared<quad>(point3(-2,-3, 5), vec3(4, 0, 0), vec3(0, 0,-4), lower_teal));
+
+        camera cam;
+        cam.aspect_ratio      = 1.0;
+        cam.image_width       = 400;
+        cam.samples_per_pixel = 100;
+        cam.max_depth         = 50;
+        cam.vfov     = 80;
+        cam.lookfrom = point3(0,0,9);
+        cam.lookat   = point3(0,0,0);
+        cam.vup      = vec3(0,1,0);
+        cam.defocus_angle = 0;
+        cam.render(world);
+    }
+
+    int main() {
+        switch (5) {
+            case 1:  bouncing_spheres(); break;
+            case 2:  checkered_spheres(); break;
+            case 3:  earth();            break;
+            case 4:  perlin_spheres();   break;
+            case 5:  quads();            break;
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
 <Img src="img-2.16-quads.png" caption="Quads" />
 
 ## Additional 2D Primitives
 
-The same framework can accommodate other 2D shapes: triangles (test that `alpha + beta <= 1`) and disks (test that the point is within a unit circle). You can subclass `Quad` and override `is_interior` for these variants.
+The same framework accommodates other 2D shapes. For a triangle, test that $\alpha + \beta \le 1$. For a disk, test that the hit point is within a unit circle. Subclass `Quad` and override `is_interior` for these variants.
 
-## A Box of Quads
+## Rectangles: An Axis-Aligned Box Made of Quads
 
-Using six quads we can build an axis-aligned box. The `make_box` helper creates a `hittable_list` of the six face quads given two opposite corners.
+Using six quads we can build an axis-aligned box. Given two opposite corners, we compute the three edge vectors and assemble the six faces.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="quad.rs | make_box"
+    ```rust filename="quad.rs | box function"
     pub fn make_box(a: Point3, b: Point3, mat: Arc<dyn Material>) -> Arc<dyn Hittable> {
         let mut sides = HittableList::new();
         let min = Point3::new(a.x().min(b.x()), a.y().min(b.y()), a.z().min(b.z()));
@@ -200,39 +544,136 @@ Using six quads we can build an axis-aligned box. The `make_box` helper creates 
         let dx = Vec3::new(max.x() - min.x(), 0.0, 0.0);
         let dy = Vec3::new(0.0, max.y() - min.y(), 0.0);
         let dz = Vec3::new(0.0, 0.0, max.z() - min.z());
-        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), max.z()),  dx,  dy, mat.clone())));
-        sides.add(Arc::new(Quad::new(Point3::new(max.x(), min.y(), max.z()), -dz,  dy, mat.clone())));
-        sides.add(Arc::new(Quad::new(Point3::new(max.x(), min.y(), min.z()), -dx,  dy, mat.clone())));
-        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dz,  dy, mat.clone())));
-        sides.add(Arc::new(Quad::new(Point3::new(min.x(), max.y(), max.z()),  dx, -dz, mat.clone())));
-        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dx,  dz, mat.clone())));
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), max.z()),  dx,  dy, mat.clone()))); // front
+        sides.add(Arc::new(Quad::new(Point3::new(max.x(), min.y(), max.z()), -dz,  dy, mat.clone()))); // right
+        sides.add(Arc::new(Quad::new(Point3::new(max.x(), min.y(), min.z()), -dx,  dy, mat.clone()))); // back
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dz,  dy, mat.clone()))); // left
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), max.y(), max.z()),  dx, -dz, mat.clone()))); // top
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dx,  dz, mat.clone()))); // bottom
         Arc::new(sides)
     }
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="quad.h | box"
+    ```cpp filename="quad.h | box function"
     inline shared_ptr<hittable_list> box(
         const point3& a, const point3& b, shared_ptr<material> mat
     ) {
         auto sides = make_shared<hittable_list>();
-
         auto min = point3(std::fmin(a.x(),b.x()), std::fmin(a.y(),b.y()), std::fmin(a.z(),b.z()));
         auto max = point3(std::fmax(a.x(),b.x()), std::fmax(a.y(),b.y()), std::fmax(a.z(),b.z()));
-
         auto dx = vec3(max.x() - min.x(), 0, 0);
         auto dy = vec3(0, max.y() - min.y(), 0);
         auto dz = vec3(0, 0, max.z() - min.z());
-
         sides->add(make_shared<quad>(point3(min.x(), min.y(), max.z()),  dx,  dy, mat)); // front
         sides->add(make_shared<quad>(point3(max.x(), min.y(), max.z()), -dz,  dy, mat)); // right
         sides->add(make_shared<quad>(point3(max.x(), min.y(), min.z()), -dx,  dy, mat)); // back
         sides->add(make_shared<quad>(point3(min.x(), min.y(), min.z()),  dz,  dy, mat)); // left
         sides->add(make_shared<quad>(point3(min.x(), max.y(), max.z()),  dx, -dz, mat)); // top
         sides->add(make_shared<quad>(point3(min.x(), min.y(), min.z()),  dx,  dz, mat)); // bottom
-
         return sides;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Building a Cornell Box
+
+The Cornell box is a classic test scene: a room with a red left wall, green right wall, white floor/ceiling/back wall, and a rectangular area light above. We add two boxes inside (lights are covered in the next chapter).
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Cornell box scene"
+    fn cornell_box() {
+        let mut world = HittableList::new();
+
+        let red   = Arc::new(Lambertian::new(Color::new(0.65, 0.05, 0.05)));
+        let white = Arc::new(Lambertian::new(Color::new(0.73, 0.73, 0.73)));
+        let green = Arc::new(Lambertian::new(Color::new(0.12, 0.45, 0.15)));
+        let light = Arc::new(DiffuseLight::new(Color::new(15.0, 15.0, 15.0)));
+
+        world.add(Arc::new(Quad::new(Point3::new(555.0,   0.0,   0.0), Vec3::new(0.0, 555.0,   0.0), Vec3::new(0.0,   0.0, 555.0), green)));
+        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(0.0, 555.0,   0.0), Vec3::new(0.0,   0.0, 555.0), red)));
+        world.add(Arc::new(Quad::new(Point3::new(343.0, 554.0, 332.0), Vec3::new(-130.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -105.0), light)));
+        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(555.0,   0.0,   0.0), Vec3::new(0.0,   0.0, 555.0), white.clone())));
+        world.add(Arc::new(Quad::new(Point3::new(555.0, 555.0, 555.0), Vec3::new(-555.0,  0.0,   0.0), Vec3::new(0.0,   0.0,-555.0), white.clone())));
+        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0, 555.0), Vec3::new(555.0,   0.0,   0.0), Vec3::new(0.0, 555.0,   0.0), white.clone())));
+
+        world.add(make_box(Point3::new(130.0, 0.0,  65.0), Point3::new(295.0, 165.0, 225.0), white.clone()));
+        world.add(make_box(Point3::new(265.0, 0.0, 295.0), Point3::new(430.0, 330.0, 460.0), white.clone()));
+
+        let mut cam = Camera::new();
+        cam.aspect_ratio      = 1.0;
+        cam.image_width       = 600;
+        cam.samples_per_pixel = 200;
+        cam.max_depth         = 50;
+        cam.background        = Color::new(0.0, 0.0, 0.0);
+        cam.vfov              = 40.0;
+        cam.lookfrom          = Point3::new(278.0, 278.0, -800.0);
+        cam.lookat            = Point3::new(278.0, 278.0,    0.0);
+        cam.vup               = Vec3::new(0.0, 1.0, 0.0);
+        cam.defocus_angle     = 0.0;
+        cam.render(&HittableList::from(Arc::new(BvhNode::from_list(world))));
+    }
+
+    fn main() {
+        match 6 {
+            1 => bouncing_spheres(),
+            2 => checkered_spheres(),
+            3 => earth(),
+            4 => perlin_spheres(),
+            5 => quads(),
+            6 => cornell_box(),
+            _ => {}
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Cornell box scene"
+    void cornell_box() {
+        hittable_list world;
+
+        auto red   = make_shared<lambertian>(color(.65, .05, .05));
+        auto white = make_shared<lambertian>(color(.73, .73, .73));
+        auto green = make_shared<lambertian>(color(.12, .45, .15));
+        auto light = make_shared<diffuse_light>(color(15, 15, 15));
+
+        world.add(make_shared<quad>(point3(555,0,0),   vec3(0,555,0), vec3(0,0,555), green));
+        world.add(make_shared<quad>(point3(0,0,0),     vec3(0,555,0), vec3(0,0,555), red));
+        world.add(make_shared<quad>(point3(343,554,332), vec3(-130,0,0), vec3(0,0,-105), light));
+        world.add(make_shared<quad>(point3(0,0,0),     vec3(555,0,0), vec3(0,0,555), white));
+        world.add(make_shared<quad>(point3(555,555,555), vec3(-555,0,0), vec3(0,0,-555), white));
+        world.add(make_shared<quad>(point3(0,0,555),   vec3(555,0,0), vec3(0,555,0), white));
+
+        world.add(box(point3(130, 0,  65), point3(295,165,225), white));
+        world.add(box(point3(265, 0, 295), point3(430,330,460), white));
+
+        camera cam;
+        cam.aspect_ratio      = 1.0;
+        cam.image_width       = 600;
+        cam.samples_per_pixel = 200;
+        cam.max_depth         = 50;
+        cam.background        = color(0,0,0);
+        cam.vfov     = 40;
+        cam.lookfrom = point3(278, 278, -800);
+        cam.lookat   = point3(278, 278, 0);
+        cam.vup      = vec3(0,1,0);
+        cam.defocus_angle = 0;
+        cam.render(hittable_list(make_shared<bvh_node>(world)));
+    }
+
+    int main() {
+        switch (6) {
+            case 1:  bouncing_spheres(); break;
+            case 2:  checkered_spheres(); break;
+            case 3:  earth();            break;
+            case 4:  perlin_spheres();   break;
+            case 5:  quads();            break;
+            case 6:  cornell_box();      break;
+        }
     }
     ```
   </Tab>
