@@ -1,8 +1,14 @@
 # Lights
 
+Lighting is a key component of raytracing. Early simple raytracers used abstract light sources, like
+points in space, or directions. Modern approaches have more physically based lights, which have
+position and size. To create such light sources, we need to be able to take any regular object and
+turn it into something that emits light into our scene.
+
 ## Emissive Materials
 
-Until now, lighting has come from a background sky. We add a `DiffuseLight` material that emits color regardless of the incoming ray direction. It doesn't scatter — it only emits.
+First, let's make a light emitting material. We need to add an `emitted` function. Like the
+background, it just tells the ray what color it is and performs no reflection. It's very simple:
 
 <Tabs>
   <Tab label="Rust">
@@ -26,7 +32,7 @@ Until now, lighting has come from a background sky. We add a `DiffuseLight` mate
             &self, _r_in: &Ray, _rec: &HitRecord,
             _attenuation: &mut Color, _scattered: &mut Ray,
         ) -> bool {
-            false // does not scatter
+            false
         }
 
         fn emitted(&self, u: f64, v: f64, p: &Point3) -> Color {
@@ -53,13 +59,85 @@ Until now, lighting has come from a background sky. We add a `DiffuseLight` mate
   </Tab>
 </Tabs>
 
-## Adding Background Color to the Ray Color Function
-
-We add a `background` color to the renderer so that rays that miss all objects return the background instead of pure black. For scenes with explicit lights, the background is usually black.
+So that we don't have to make all the non-emitting materials implement `emitted()`, the base trait
+provides a default implementation that returns black:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="camera.rs | background in ray_color"
+    ```rust filename="material.rs | New emitted function in Material"
+    pub trait Material: Send + Sync {
+        fn scatter(
+            &self, r_in: &Ray, rec: &HitRecord,
+            attenuation: &mut Color, scattered: &mut Ray,
+        ) -> bool {
+            false
+        }
+
+        fn emitted(&self, _u: f64, _v: f64, _p: &Point3) -> Color {
+            Color::new(0.0, 0.0, 0.0)
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="material.h | New emitted function in class material"
+    class material {
+      public:
+        virtual ~material() = default;
+
+        virtual color emitted(double u, double v, const point3& p) const {
+            return color(0,0,0);
+        }
+
+        virtual bool scatter(
+            const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered
+        ) const {
+            return false;
+        }
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Adding Background Color to the Ray Color Function
+
+Next, we want a pure black background so the only light in the scene is coming from the emitters. To
+do this, we'll add a `background` color to the camera and pay attention to the new
+`color_from_emission` value.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="camera.rs | background field in Camera"
+    pub struct Camera {
+        pub aspect_ratio: f64,
+        pub image_width: i32,
+        pub samples_per_pixel: i32,
+        pub max_depth: i32,
+        pub background: Color,
+        // ...
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="camera.h | background field in Camera"
+    class camera {
+      public:
+        double aspect_ratio      = 1.0;
+        int    image_width       = 100;
+        int    samples_per_pixel = 10;
+        int    max_depth         = 10;
+        color  background;               // Scene background color
+        // ...
+    };
+    ```
+  </Tab>
+</Tabs>
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="camera.rs | ray_color with background and emitting materials"
     fn ray_color(r: &Ray, background: Color, world: &dyn Hittable, depth: i32) -> Color {
         if depth <= 0 {
             return Color::new(0.0, 0.0, 0.0);
@@ -82,66 +160,256 @@ We add a `background` color to the renderer so that rays that miss all objects r
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="camera.h | ray_color with background"
-    color ray_color(const ray& r, const color& background, int depth, const hittable& world) const {
+    ```cpp filename="camera.h | ray_color function with background and emitting materials"
+    color ray_color(const ray& r, int depth, const hittable& world) const {
         if (depth <= 0) return color(0,0,0);
+
         hit_record rec;
+
+        // If the ray hits nothing, return the background color.
         if (!world.hit(r, interval(0.001, infinity), rec))
             return background;
-        color color_from_emission = rec.mat->emitted(rec.u, rec.v, rec.p);
+
         ray scattered;
         color attenuation;
+        color color_from_emission = rec.mat->emitted(rec.u, rec.v, rec.p);
+
         if (!rec.mat->scatter(r, rec, attenuation, scattered))
             return color_from_emission;
-        color color_from_scatter = attenuation * ray_color(scattered, background, depth-1, world);
+
+        color color_from_scatter = attenuation * ray_color(scattered, depth-1, world);
+
         return color_from_emission + color_from_scatter;
     }
     ```
   </Tab>
 </Tabs>
 
-## Turning Objects into Lights
-
-Any object with a `DiffuseLight` material becomes a light source. We can use a quad as a rectangular area light — common in physically-based rendering.
+`main()` is updated to set the background color for the prior scenes:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Rectangle light"
-    let difflight = Arc::new(DiffuseLight::from_color(Color::new(4.0, 4.0, 4.0)));
-    world.add(Arc::new(Quad::new(
-        Point3::new(3.0, 1.0, -2.0),
-        Vec3::new(2.0, 0.0, 0.0),
-        Vec3::new(0.0, 2.0, 0.0),
-        difflight,
-    )));
+    ```rust filename="main.rs | Specifying new background color"
+    fn bouncing_spheres() {
+        // ...
+        let mut cam = Camera::default();
+        cam.aspect_ratio      = 16.0 / 9.0;
+        cam.image_width       = 400;
+        cam.samples_per_pixel = 100;
+        cam.max_depth         = 20;
+        cam.background        = Color::new(0.70, 0.80, 1.00);
+        // ...
+    }
+
+    fn checkered_spheres() {
+        // ...
+        cam.background = Color::new(0.70, 0.80, 1.00);
+        // ...
+    }
+
+    fn earth() {
+        // ...
+        cam.background = Color::new(0.70, 0.80, 1.00);
+        // ...
+    }
+
+    fn perlin_spheres() {
+        // ...
+        cam.background = Color::new(0.70, 0.80, 1.00);
+        // ...
+    }
+
+    fn quads() {
+        // ...
+        cam.background = Color::new(0.70, 0.80, 1.00);
+        // ...
+    }
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="main.cc | Rectangle light"
-    auto difflight = make_shared<diffuse_light>(color(4,4,4));
-    world.add(make_shared<quad>(point3(3,1,-2), vec3(2,0,0), vec3(0,2,0), difflight));
+    ```cpp filename="main.cc | Specifying new background color"
+    void bouncing_spheres() {
+        // ...
+        camera cam;
+
+        cam.aspect_ratio      = 16.0 / 9.0;
+        cam.image_width       = 400;
+        cam.samples_per_pixel = 100;
+        cam.max_depth         = 20;
+        cam.background        = color(0.70, 0.80, 1.00);
+        // ...
+    }
+
+    void checkered_spheres() {
+        // ...
+        cam.background        = color(0.70, 0.80, 1.00);
+        // ...
+    }
+
+    void earth() {
+        // ...
+        cam.background        = color(0.70, 0.80, 1.00);
+        // ...
+    }
+
+    void perlin_spheres() {
+        // ...
+        cam.background        = color(0.70, 0.80, 1.00);
+        // ...
+    }
+
+    void quads() {
+        // ...
+        cam.background        = color(0.70, 0.80, 1.00);
+        // ...
+    }
+    ```
+  </Tab>
+</Tabs>
+
+Since we're removing the code that determined the color of the sky when a ray missed all objects,
+we pass in a new color value for our old scene renders — a flat bluish-white for the whole sky.
+
+## Turning Objects into Lights
+
+If we set up a rectangle as a light:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | A simple rectangle light"
+    fn simple_light() -> HittableList {
+        let mut world = HittableList::new();
+
+        let pertext = Arc::new(NoiseTexture::new(4.0));
+        world.add(Arc::new(Sphere::new(
+            Point3::new(0.0, -1000.0, 0.0), 1000.0,
+            Arc::new(Lambertian::new(pertext.clone())),
+        )));
+        world.add(Arc::new(Sphere::new(
+            Point3::new(0.0, 2.0, 0.0), 2.0,
+            Arc::new(Lambertian::new(pertext)),
+        )));
+
+        let difflight = Arc::new(DiffuseLight::from_color(Color::new(4.0, 4.0, 4.0)));
+        world.add(Arc::new(Quad::new(
+            Point3::new(3.0, 1.0, -2.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+            difflight,
+        )));
+
+        world
+    }
+
+    fn main() {
+        match 6 {
+            1 => bouncing_spheres(),
+            2 => checkered_spheres(),
+            3 => earth(),
+            4 => perlin_spheres(),
+            5 => quads(),
+            6 => {
+                let world = simple_light();
+                let mut cam = Camera::default();
+                cam.aspect_ratio      = 16.0 / 9.0;
+                cam.image_width       = 400;
+                cam.samples_per_pixel = 100;
+                cam.max_depth         = 50;
+                cam.background        = Color::new(0.0, 0.0, 0.0);
+                cam.vfov              = 20.0;
+                cam.lookfrom          = Point3::new(26.0, 3.0, 6.0);
+                cam.lookat            = Point3::new(0.0, 2.0, 0.0);
+                cam.vup               = Vec3::new(0.0, 1.0, 0.0);
+                cam.defocus_angle     = 0.0;
+                cam.render(&world);
+            }
+            _ => {}
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | A simple rectangle light"
+    void simple_light() {
+        hittable_list world;
+
+        auto pertext = make_shared<noise_texture>(4);
+        world.add(make_shared<sphere>(point3(0,-1000,0), 1000, make_shared<lambertian>(pertext)));
+        world.add(make_shared<sphere>(point3(0,2,0), 2, make_shared<lambertian>(pertext)));
+
+        auto difflight = make_shared<diffuse_light>(color(4,4,4));
+        world.add(make_shared<quad>(point3(3,1,-2), vec3(2,0,0), vec3(0,2,0), difflight));
+
+        camera cam;
+
+        cam.aspect_ratio      = 16.0 / 9.0;
+        cam.image_width       = 400;
+        cam.samples_per_pixel = 100;
+        cam.max_depth         = 50;
+        cam.background        = color(0,0,0);
+
+        cam.vfov     = 20;
+        cam.lookfrom = point3(26,3,6);
+        cam.lookat   = point3(0,2,0);
+        cam.vup      = vec3(0,1,0);
+
+        cam.defocus_angle = 0;
+
+        cam.render(world);
+    }
+
+    int main() {
+        switch (6) {
+            case 1:  bouncing_spheres();   break;
+            case 2:  checkered_spheres();  break;
+            case 3:  earth();              break;
+            case 4:  perlin_spheres();     break;
+            case 5:  quads();              break;
+            case 6:  simple_light();       break;
+        }
+    }
     ```
   </Tab>
 </Tabs>
 
 <Img src="img-2.17-rect-light.png" caption="Scene with rectangle light source" />
 
-We can also add a sphere light to the scene:
+Note that the light is brighter than $(1,1,1)$. This allows it to be bright enough to light things.
+
+Fool around with making some sphere lights too:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Sphere light"
-    world.add(Arc::new(Sphere::new(
-        Point3::new(0.0, 7.0, 0.0), 2.0,
-        Arc::new(DiffuseLight::from_color(Color::new(4.0, 4.0, 4.0))),
-    )));
+    ```rust filename="main.rs | A simple rectangle light plus illuminating ball"
+    fn simple_light() -> HittableList {
+        // ...
+        let difflight = Arc::new(DiffuseLight::from_color(Color::new(4.0, 4.0, 4.0)));
+        world.add(Arc::new(Sphere::new(
+            Point3::new(0.0, 7.0, 0.0), 2.0,
+            difflight.clone(),
+        )));
+        world.add(Arc::new(Quad::new(
+            Point3::new(3.0, 1.0, -2.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+            difflight,
+        )));
+        // ...
+    }
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="main.cc | Sphere light"
-    world.add(make_shared<sphere>(point3(0,7,0), 2, difflight));
+    ```cpp filename="main.cc | A simple rectangle light plus illuminating ball"
+    void simple_light() {
+        // ...
+        auto difflight = make_shared<diffuse_light>(color(4,4,4));
+        world.add(make_shared<sphere>(point3(0,7,0), 2, difflight));
+        world.add(make_shared<quad>(point3(3,1,-2), vec3(2,0,0), vec3(0,2,0), difflight));
+        // ...
+    }
     ```
   </Tab>
 </Tabs>
@@ -150,12 +418,13 @@ We can also add a sphere light to the scene:
 
 ## Creating an Empty "Cornell Box"
 
-The Cornell Box is the classic test scene for global illumination: a box made of quads — two red walls, two white walls, a white ceiling, a white floor, and a white rectangular light on the ceiling.
+The "Cornell Box" was introduced in 1984 to model the interaction of light between diffuse surfaces.
+Let's make the 5 walls and the light of the box:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Cornell box setup"
-    pub fn cornell_box() -> HittableList {
+    ```rust filename="main.rs | Cornell box scene, empty"
+    fn cornell_box() -> HittableList {
         let mut world = HittableList::new();
 
         let red   = Arc::new(Lambertian::from_color(Color::new(0.65, 0.05, 0.05)));
@@ -163,37 +432,95 @@ The Cornell Box is the classic test scene for global illumination: a box made of
         let green = Arc::new(Lambertian::from_color(Color::new(0.12, 0.45, 0.15)));
         let light = Arc::new(DiffuseLight::from_color(Color::new(15.0, 15.0, 15.0)));
 
-        // walls
-        world.add(Arc::new(Quad::new(Point3::new(555.0,0.0,0.0),   Vec3::new(0.0,555.0,0.0), Vec3::new(0.0,0.0,555.0), green)));
-        world.add(Arc::new(Quad::new(Point3::new(0.0,0.0,0.0),     Vec3::new(0.0,555.0,0.0), Vec3::new(0.0,0.0,555.0), red)));
-        world.add(Arc::new(Quad::new(Point3::new(343.0,554.0,332.0),Vec3::new(-130.0,0.0,0.0),Vec3::new(0.0,0.0,-105.0),light)));
-        world.add(Arc::new(Quad::new(Point3::new(0.0,0.0,0.0),     Vec3::new(555.0,0.0,0.0), Vec3::new(0.0,0.0,555.0), white.clone())));
-        world.add(Arc::new(Quad::new(Point3::new(555.0,555.0,555.0),Vec3::new(-555.0,0.0,0.0),Vec3::new(0.0,0.0,-555.0),white.clone())));
-        world.add(Arc::new(Quad::new(Point3::new(0.0,0.0,555.0),   Vec3::new(555.0,0.0,0.0), Vec3::new(0.0,555.0,0.0), white.clone())));
+        world.add(Arc::new(Quad::new(Point3::new(555.0,   0.0,   0.0), Vec3::new(0.0, 555.0,   0.0), Vec3::new(  0.0, 0.0, 555.0), green)));
+        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(0.0, 555.0,   0.0), Vec3::new(  0.0, 0.0, 555.0), red)));
+        world.add(Arc::new(Quad::new(Point3::new(343.0, 554.0, 332.0), Vec3::new(-130.0, 0.0, 0.0), Vec3::new(  0.0, 0.0,-105.0), light)));
+        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(555.0,   0.0, 0.0), Vec3::new(  0.0, 0.0, 555.0), white.clone())));
+        world.add(Arc::new(Quad::new(Point3::new(555.0, 555.0, 555.0), Vec3::new(-555.0,  0.0, 0.0), Vec3::new(  0.0, 0.0,-555.0), white.clone())));
+        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0, 555.0), Vec3::new(555.0,   0.0, 0.0), Vec3::new(  0.0, 555.0, 0.0), white.clone())));
 
         world
+    }
+
+    fn main() {
+        match 7 {
+            1 => bouncing_spheres(),
+            2 => checkered_spheres(),
+            3 => earth(),
+            4 => perlin_spheres(),
+            5 => quads(),
+            6 => simple_light(),
+            7 => {
+                let world = cornell_box();
+                let mut cam = Camera::default();
+                cam.aspect_ratio      = 1.0;
+                cam.image_width       = 600;
+                cam.samples_per_pixel = 200;
+                cam.max_depth         = 50;
+                cam.background        = Color::new(0.0, 0.0, 0.0);
+                cam.vfov              = 40.0;
+                cam.lookfrom          = Point3::new(278.0, 278.0, -800.0);
+                cam.lookat            = Point3::new(278.0, 278.0, 0.0);
+                cam.vup               = Vec3::new(0.0, 1.0, 0.0);
+                cam.defocus_angle     = 0.0;
+                cam.render(&world);
+            }
+            _ => {}
+        }
     }
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="main.cc | Cornell box"
+    ```cpp filename="main.cc | Cornell box scene, empty"
     void cornell_box() {
         hittable_list world;
+
         auto red   = make_shared<lambertian>(color(.65, .05, .05));
         auto white = make_shared<lambertian>(color(.73, .73, .73));
         auto green = make_shared<lambertian>(color(.12, .45, .15));
         auto light = make_shared<diffuse_light>(color(15, 15, 15));
 
-        world.add(make_shared<quad>(point3(555,0,0),   vec3(0,555,0), vec3(0,0,555), green));
-        world.add(make_shared<quad>(point3(0,0,0),     vec3(0,555,0), vec3(0,0,555), red));
+        world.add(make_shared<quad>(point3(555,0,0),    vec3(0,555,0), vec3(0,0,555), green));
+        world.add(make_shared<quad>(point3(0,0,0),      vec3(0,555,0), vec3(0,0,555), red));
         world.add(make_shared<quad>(point3(343,554,332),vec3(-130,0,0),vec3(0,0,-105),light));
-        world.add(make_shared<quad>(point3(0,0,0),     vec3(555,0,0), vec3(0,0,555), white));
+        world.add(make_shared<quad>(point3(0,0,0),      vec3(555,0,0), vec3(0,0,555), white));
         world.add(make_shared<quad>(point3(555,555,555),vec3(-555,0,0),vec3(0,0,-555),white));
-        world.add(make_shared<quad>(point3(0,0,555),   vec3(555,0,0), vec3(0,555,0), white));
+        world.add(make_shared<quad>(point3(0,0,555),    vec3(555,0,0), vec3(0,555,0), white));
+
+        camera cam;
+
+        cam.aspect_ratio      = 1.0;
+        cam.image_width       = 600;
+        cam.samples_per_pixel = 200;
+        cam.max_depth         = 50;
+        cam.background        = color(0,0,0);
+
+        cam.vfov     = 40;
+        cam.lookfrom = point3(278, 278, -800);
+        cam.lookat   = point3(278, 278, 0);
+        cam.vup      = vec3(0,1,0);
+
+        cam.defocus_angle = 0;
+
+        cam.render(world);
+    }
+
+    int main() {
+        switch (7) {
+            case 1:  bouncing_spheres();   break;
+            case 2:  checkered_spheres();  break;
+            case 3:  earth();              break;
+            case 4:  perlin_spheres();     break;
+            case 5:  quads();              break;
+            case 6:  simple_light();       break;
+            case 7:  cornell_box();        break;
+        }
     }
     ```
   </Tab>
 </Tabs>
 
 <Img src="img-2.19-cornell-empty.png" caption="Empty Cornell box" />
+
+This image is very noisy because the light is small, so most random rays don't hit the light source.
