@@ -148,6 +148,85 @@ We can use the Perlin class as a texture. A simple noise texture just maps the n
 
 <Img src="img-2.09-hash-random.png" caption="Hashed random texture" />
 
+We can use this as a scene to test it out:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Scene with two Perlin-textured spheres"
+    fn perlin_spheres() {
+        let mut world = HittableList::new();
+
+        let pertext = Arc::new(NoiseTexture::new(1.0));
+        world.add(Arc::new(Sphere::new_stationary(
+            Point3::new(0.0, -1000.0, 0.0), 1000.0,
+            Arc::new(Lambertian::from_texture(pertext.clone())),
+        )));
+        world.add(Arc::new(Sphere::new_stationary(
+            Point3::new(0.0, 2.0, 0.0), 2.0,
+            Arc::new(Lambertian::from_texture(pertext)),
+        )));
+
+        let mut cam = Camera::new();
+        cam.aspect_ratio      = 16.0 / 9.0;
+        cam.image_width       = 400;
+        cam.samples_per_pixel = 100;
+        cam.max_depth         = 50;
+        cam.vfov              = 20.0;
+        cam.lookfrom          = Point3::new(13.0, 2.0, 3.0);
+        cam.lookat            = Point3::new(0.0, 0.0, 0.0);
+        cam.vup               = Vec3::new(0.0, 1.0, 0.0);
+        cam.defocus_angle     = 0.0;
+        cam.render(&world);
+    }
+
+    fn main() {
+        match 4 {
+            1 => bouncing_spheres(),
+            2 => checkered_spheres(),
+            3 => earth(),
+            4 => perlin_spheres(),
+            _ => {}
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Scene with two Perlin-textured spheres"
+    void perlin_spheres() {
+        hittable_list world;
+
+        auto pertext = make_shared<noise_texture>();
+        world.add(make_shared<sphere>(point3(0,-1000,0), 1000,
+            make_shared<lambertian>(pertext)));
+        world.add(make_shared<sphere>(point3(0,2,0), 2,
+            make_shared<lambertian>(pertext)));
+
+        camera cam;
+        cam.aspect_ratio      = 16.0 / 9.0;
+        cam.image_width       = 400;
+        cam.samples_per_pixel = 100;
+        cam.max_depth         = 50;
+        cam.vfov     = 20;
+        cam.lookfrom = point3(13,2,3);
+        cam.lookat   = point3(0,0,0);
+        cam.vup      = vec3(0,1,0);
+        cam.defocus_angle = 0;
+        cam.render(world);
+    }
+
+    int main() {
+        switch (4) {
+            case 1: bouncing_spheres(); break;
+            case 2: checkered_spheres(); break;
+            case 3: earth();            break;
+            case 4: perlin_spheres();   break;
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
 ## Smoothing out the Result
 
 Using floor-indexed lookups produces a blocky result. We apply trilinear interpolation between the eight surrounding lattice points to smooth it out.
@@ -299,6 +378,43 @@ It is also a bit low frequency. We can scale the input point to make it vary mor
 </Tabs>
 
 <Img src="img-2.12-perlin-hifreq.png" caption="Perlin texture, higher frequency" />
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Perlin-textured spheres with a scale to the noise"
+    fn perlin_spheres() {
+        let mut world = HittableList::new();
+
+        let pertext = Arc::new(NoiseTexture::new(4.0));
+        world.add(Arc::new(Sphere::new_stationary(
+            Point3::new(0.0, -1000.0, 0.0), 1000.0,
+            Arc::new(Lambertian::from_texture(pertext.clone())),
+        )));
+        world.add(Arc::new(Sphere::new_stationary(
+            Point3::new(0.0, 2.0, 0.0), 2.0,
+            Arc::new(Lambertian::from_texture(pertext)),
+        )));
+        // ... camera setup same as before
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Perlin-textured spheres with a scale to the noise"
+    void perlin_spheres() {
+        hittable_list world;
+
+        auto pertext = make_shared<noise_texture>(4);
+        world.add(make_shared<sphere>(point3(0,-1000,0), 1000,
+            make_shared<lambertian>(pertext)));
+        world.add(make_shared<sphere>(point3(0, 2, 0), 2,
+            make_shared<lambertian>(pertext)));
+
+        // ... camera setup same as before
+    }
+    ```
+  </Tab>
+</Tabs>
 
 ## Using Random Vectors on the Lattice Points
 
