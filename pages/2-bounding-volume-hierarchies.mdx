@@ -1,5 +1,7 @@
 # Bounding Volume Hierarchies
 
+Ray-object intersection is the main time-bottleneck in a ray tracer, and the run time is linear with the number of objects. But it's a repeated search on the same scene, so we ought to be able to make it a logarithmic search in the spirit of binary search. Because we are sending millions to billions of rays on the same scene, we can sort the objects and then each ray intersection can be a sublinear search. The two most common families of sorting are 1) to subdivide space and 2) to subdivide the list of objects. The latter is usually much easier to code up, and just as fast to run for most models.
+
 ## The Key Idea
 
 The key idea of creating bounding volumes for a set of primitives is to find a volume that fully encloses (bounds) all the objects. For example, suppose you computed a bounding sphere of 10 objects. Any ray that misses the bounding sphere definitely misses all ten objects inside. If the ray hits the bounding sphere, then it might hit one of the ten objects. So the bounding code is always of the form:
@@ -33,6 +35,30 @@ The BVH forms a tree. The root is the bounding box for the whole scene. Each int
 To get good performance we need a good division into subsets, and to traverse the BVH quickly we need intersection tests that are very fast. We use axis-aligned bounding rectangular parallelepipeds (axis-aligned bounding boxes, or AABBs) for this. All you need to know is that testing a ray against an AABB is fast, and that AABBs work well in practice.
 
 The slab method is based on the observation that an n-dimensional AABB is just the intersection of n axis-aligned intervals, often called "slabs". An interval is just the points between two endpoints, e.g., $x$ such that $3 \le x \le 5$. In 2D, two intervals stacked make a 2D AABB (a rectangle). In 3D, three intervals make an AABB.
+
+We also add an `expand` helper to `Interval` for padding a bounding box by a small delta — useful for handling numerical precision when rays graze box boundaries.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="interval.rs | interval::expand() method"
+    impl Interval {
+        pub fn expand(&self, delta: f64) -> Self {
+            let padding = delta / 2.0;
+            Self::new(self.min - padding, self.max + padding)
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="interval.h | interval::expand() method"
+    interval expand(double delta) const {
+        auto padding = delta/2;
+        return interval(min - padding, max + padding);
+    }
+    ```
+  </Tab>
+</Tabs>
 
 <Tabs>
   <Tab label="Rust">
