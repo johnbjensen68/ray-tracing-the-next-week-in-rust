@@ -88,9 +88,9 @@ The slab method is based on the observation that an n-dimensional AABB is just t
           : x(x), y(y), z(z) {}
 
         aabb(const point3& a, const point3& b) {
-            x = interval(std::fmin(a[0],b[0]), std::fmax(a[0],b[0]));
-            y = interval(std::fmin(a[1],b[1]), std::fmax(a[1],b[1]));
-            z = interval(std::fmin(a[2],b[2]), std::fmax(a[2],b[2]));
+            x = (a[0] <= b[0]) ? interval(a[0], b[0]) : interval(b[0], a[0]);
+            y = (a[1] <= b[1]) ? interval(a[1], b[1]) : interval(b[1], a[1]);
+            z = (a[2] <= b[2]) ? interval(a[2], b[2]) : interval(b[2], a[2]);
         }
 
         aabb(const aabb& box0, const aabb& box1) {
@@ -142,7 +142,7 @@ The slab method tests a ray against an AABB by intersecting it with three pairs 
 
   <Tab label="C++">
     ```cpp filename="aabb.h | hit function"
-    bool aabb::hit(const ray& r, interval ray_t) const {
+    bool hit(const ray& r, interval ray_t) const {
         for (int axis = 0; axis < 3; axis++) {
             const interval& ax = axis_interval(axis);
             const double adinv = 1.0 / r.direction()[axis];
@@ -189,13 +189,176 @@ Every hittable object needs a method to return its AABB. We add `bounding_box` t
   </Tab>
 </Tabs>
 
+For a stationary sphere, the bounding box is straightforward: center ± radius on each axis.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="sphere.rs | Stationary sphere with bounding box"
+    impl Sphere {
+        pub fn new_stationary(center: Point3, radius: f64, mat: Arc<dyn Material>) -> Self {
+            let rvec = Vec3::new(radius, radius, radius);
+            let bbox = Aabb::from_points(center - rvec, center + rvec);
+            Self {
+                center: Ray::new(center, Vec3::zero(), 0.0),
+                radius: radius.max(0.0),
+                mat,
+                bbox,
+            }
+        }
+    }
+
+    impl Hittable for Sphere {
+        fn bounding_box(&self) -> Aabb {
+            self.bbox
+        }
+        // ...
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="sphere.h | Stationary sphere with bounding box"
+    class sphere : public hittable {
+      public:
+        // Stationary sphere
+        sphere(const point3& static_center, double radius, shared_ptr<material> mat)
+          : center(static_center, vec3(0,0,0)), radius(std::fmax(0,radius)), mat(mat)
+        {
+            auto rvec = vec3(radius, radius, radius);
+            bbox = aabb(static_center - rvec, static_center + rvec);
+        }
+
+        aabb bounding_box() const override { return bbox; }
+
+      private:
+        ray center;
+        double radius;
+        shared_ptr<material> mat;
+        aabb bbox;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+For a moving sphere we need a box that encloses the entire trajectory. We compute boxes at `t=0` and `t=1` and take their union. The union of two AABBs requires a helper on both `Interval` and `Aabb`:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="interval.rs | Interval from two intervals"
+    impl Interval {
+        pub fn from_intervals(a: Interval, b: Interval) -> Self {
+            Self {
+                min: a.min.min(b.min),
+                max: a.max.max(b.max),
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="interval.h | Interval from two intervals"
+    interval(const interval& a, const interval& b) {
+        // Create the interval tightly enclosing the two input intervals.
+        min = a.min <= b.min ? a.min : b.min;
+        max = a.max >= b.max ? a.max : b.max;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="sphere.rs | Moving sphere with bounding box"
+    impl Sphere {
+        pub fn new_moving(
+            center1: Point3,
+            center2: Point3,
+            radius: f64,
+            mat: Arc<dyn Material>,
+        ) -> Self {
+            let rvec = Vec3::new(radius, radius, radius);
+            let box1 = Aabb::from_points(center1 - rvec, center1 + rvec);
+            let box2 = Aabb::from_points(center2 - rvec, center2 + rvec);
+            let bbox = Aabb::from_aabbs(box1, box2);
+            Self {
+                center: Ray::new(center1, center2 - center1, 0.0),
+                radius: radius.max(0.0),
+                mat,
+                bbox,
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="sphere.h | Moving sphere with bounding box"
+    // Moving sphere
+    sphere(const point3& center1, const point3& center2, double radius,
+           shared_ptr<material> mat)
+      : center(center1, center2 - center1), radius(std::fmax(0,radius)), mat(mat)
+    {
+        auto rvec = vec3(radius, radius, radius);
+        aabb box1(center.at(0) - rvec, center.at(0) + rvec);
+        aabb box2(center.at(1) - rvec, center.at(1) + rvec);
+        bbox = aabb(box1, box2);
+    }
+    ```
+  </Tab>
+</Tabs>
+
 ## Creating Bounding Boxes of Lists of Objects
 
-A `HittableList`'s bounding box is the union of the bounding boxes of all its children, computed at construction time.
+A `HittableList`'s bounding box is the union of the bounding boxes of all its children, accumulated as objects are added.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="hittable_list.rs | HittableList with bounding box"
+    pub struct HittableList {
+        pub objects: Vec<Arc<dyn Hittable>>,
+        bbox: Aabb,
+    }
+
+    impl HittableList {
+        pub fn add(&mut self, object: Arc<dyn Hittable>) {
+            self.bbox = Aabb::from_aabbs(self.bbox, object.bounding_box());
+            self.objects.push(object);
+        }
+    }
+
+    impl Hittable for HittableList {
+        fn bounding_box(&self) -> Aabb {
+            self.bbox
+        }
+        // ...
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="hittable_list.h | hittable_list with bounding box"
+    class hittable_list : public hittable {
+      public:
+        std::vector<shared_ptr<hittable>> objects;
+
+        void add(shared_ptr<hittable> object) {
+            objects.push_back(object);
+            bbox = aabb(bbox, object->bounding_box());
+        }
+
+        aabb bounding_box() const override { return bbox; }
+
+      private:
+        aabb bbox;
+    };
+    ```
+  </Tab>
+</Tabs>
 
 ## The BVH Node Class
 
-The BVH node is itself a `Hittable`. It stores two children (also `Hittable`s, which may be primitives or other BVH nodes) and their combined AABB.
+The BVH node is itself a `Hittable`. It stores two children (also `Hittable`s, which may be primitives or other BVH nodes) and their combined AABB. Traversal checks the box first; only if the box is hit do we recurse into children.
 
 <Tabs>
   <Tab label="Rust">
@@ -253,7 +416,28 @@ The BVH node is itself a `Hittable`. It stores two children (also `Hittable`s, w
 
 ## Splitting BVH Volumes
 
-To build the tree we recursively split the list of objects by sorting along a random axis and dividing the sorted list in half. The recursion bottoms out when there are one or two objects.
+To build the tree we recursively split the list of objects. The simplest strategy: pick a random axis, sort the primitives along it, and split the sorted list in half. The recursion bottoms out at one or two objects.
+
+We also need a small utility to generate random integers:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="rtweekend.rs | random_int"
+    pub fn random_int(min: i32, max: i32) -> i32 {
+        random_double_range(min as f64, (max + 1) as f64) as i32
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="rtweekend.h | A function to return random integers in a range"
+    inline int random_int(int min, int max) {
+        // Returns a random integer in [min,max].
+        return int(random_double(min, max+1));
+    }
+    ```
+  </Tab>
+</Tabs>
 
 <Tabs>
   <Tab label="Rust">
@@ -261,26 +445,25 @@ To build the tree we recursively split the list of objects by sorting along a ra
     impl BvhNode {
         pub fn new(objects: &mut Vec<Arc<dyn Hittable>>, start: usize, end: usize) -> Self {
             let axis = random_int(0, 2) as usize;
-            let comparator = |a: &Arc<dyn Hittable>, b: &Arc<dyn Hittable>| {
-                box_compare(a, b, axis)
-            };
             let object_span = end - start;
-            let (left, right): (Arc<dyn Hittable>, Arc<dyn Hittable>) = match object_span {
-                1 => (objects[start].clone(), objects[start].clone()),
-                2 => {
-                    let (a, b) = (objects[start].clone(), objects[start + 1].clone());
-                    if comparator(&a, &b) == Ordering::Less { (a, b) } else { (b, a) }
+            let (left, right): (Arc<dyn Hittable>, Arc<dyn Hittable>) = if object_span == 1 {
+                (objects[start].clone(), objects[start].clone())
+            } else if object_span == 2 {
+                let (a, b) = (objects[start].clone(), objects[start + 1].clone());
+                if box_compare(&*a, &*b, axis) == Ordering::Less {
+                    (a, b)
+                } else {
+                    (b, a)
                 }
-                _ => {
-                    objects[start..end].sort_by(comparator);
-                    let mid = start + object_span / 2;
-                    (
-                        Arc::new(BvhNode::new(objects, start, mid)),
-                        Arc::new(BvhNode::new(objects, mid, end)),
-                    )
-                }
+            } else {
+                objects[start..end].sort_by(|a, b| box_compare(&**a, &**b, axis));
+                let mid = start + object_span / 2;
+                (
+                    Arc::new(BvhNode::new(objects, start, mid)),
+                    Arc::new(BvhNode::new(objects, mid, end)),
+                )
             };
-            let bbox = Aabb::surrounding_box(left.bounding_box(), right.bounding_box());
+            let bbox = Aabb::from_aabbs(left.bounding_box(), right.bounding_box());
             Self { left, right, bbox }
         }
     }
@@ -290,15 +473,201 @@ To build the tree we recursively split the list of objects by sorting along a ra
   <Tab label="C++">
     ```cpp filename="bvh.h | bvh_node constructor"
     bvh_node(std::vector<shared_ptr<hittable>>& objects, size_t start, size_t end) {
+        int axis = random_int(0, 2);
+
+        auto comparator = (axis == 0) ? box_x_compare
+                        : (axis == 1) ? box_y_compare
+                                      : box_z_compare;
+
+        size_t object_span = end - start;
+
+        if (object_span == 1) {
+            left = right = objects[start];
+        } else if (object_span == 2) {
+            left  = objects[start];
+            right = objects[start+1];
+        } else {
+            std::sort(objects.begin() + start, objects.begin() + end, comparator);
+            auto mid = start + object_span/2;
+            left  = make_shared<bvh_node>(objects, start, mid);
+            right = make_shared<bvh_node>(objects, mid, end);
+        }
+
+        bbox = aabb(left->bounding_box(), right->bounding_box());
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## The Box Comparison Functions
+
+The comparators sort hittables by the minimum of their bounding box interval along a given axis.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="bvh.rs | Box comparison functions"
+    fn box_compare(a: &dyn Hittable, b: &dyn Hittable, axis: usize) -> Ordering {
+        let a_interval = a.bounding_box().axis_interval(axis);
+        let b_interval = b.bounding_box().axis_interval(axis);
+        a_interval.min.partial_cmp(&b_interval.min).unwrap_or(Ordering::Equal)
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="bvh.h | BVH comparison functions"
+    class bvh_node : public hittable {
+      // ...
+      private:
+        static bool box_compare(
+            const shared_ptr<hittable> a, const shared_ptr<hittable> b, int axis_index
+        ) {
+            auto a_axis_interval = a->bounding_box().axis_interval(axis_index);
+            auto b_axis_interval = b->bounding_box().axis_interval(axis_index);
+            return a_axis_interval.min < b_axis_interval.min;
+        }
+
+        static bool box_x_compare(const shared_ptr<hittable> a, const shared_ptr<hittable> b) {
+            return box_compare(a, b, 0);
+        }
+
+        static bool box_y_compare(const shared_ptr<hittable> a, const shared_ptr<hittable> b) {
+            return box_compare(a, b, 1);
+        }
+
+        static bool box_z_compare(const shared_ptr<hittable> a, const shared_ptr<hittable> b) {
+            return box_compare(a, b, 2);
+        }
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Using the BVH
+
+Wrapping the world in a BVH node is a one-line change. The BVH will restructure the list into a tree; all subsequent ray queries traverse the tree instead of scanning every object.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Random spheres, using BVH"
+    let world = HittableList::new(Arc::new(BvhNode::from_list(world)));
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Random spheres, using BVH"
+    world = hittable_list(make_shared<bvh_node>(world));
+    ```
+  </Tab>
+</Tabs>
+
+## Another BVH Optimization
+
+Rather than choosing a random axis for each split, we can do better by always splitting along the *longest* axis of the bounding box covering the current object span. This tends to produce more balanced trees.
+
+First we add `longest_axis()` to `Aabb`, along with `empty` and `universe` sentinel values:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="aabb.rs | longest_axis and sentinel constants"
+    impl Aabb {
+        pub fn longest_axis(&self) -> usize {
+            if self.x.size() > self.y.size() {
+                if self.x.size() > self.z.size() { 0 } else { 2 }
+            } else {
+                if self.y.size() > self.z.size() { 1 } else { 2 }
+            }
+        }
+
+        pub const EMPTY: Aabb = Aabb {
+            x: Interval::EMPTY,
+            y: Interval::EMPTY,
+            z: Interval::EMPTY,
+        };
+
+        pub const UNIVERSE: Aabb = Aabb {
+            x: Interval::UNIVERSE,
+            y: Interval::UNIVERSE,
+            z: Interval::UNIVERSE,
+        };
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="aabb.h | New aabb constants and longest_axis() function"
+    class aabb {
+      public:
+        // ...
+
+        int longest_axis() const {
+            if (x.size() > y.size())
+                return x.size() > z.size() ? 0 : 2;
+            else
+                return y.size() > z.size() ? 1 : 2;
+        }
+
+        static const aabb empty, universe;
+    };
+
+    const aabb aabb::empty    = aabb(interval::empty,    interval::empty,    interval::empty);
+    const aabb aabb::universe = aabb(interval::universe, interval::universe, interval::universe);
+    ```
+  </Tab>
+</Tabs>
+
+Now we update the BVH constructor: compute the bounding box for the entire span upfront, pick the longest axis, then sort and split as before.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="bvh.rs | BvhNode::new with longest axis"
+    impl BvhNode {
+        pub fn new(objects: &mut Vec<Arc<dyn Hittable>>, start: usize, end: usize) -> Self {
+            let mut bbox = Aabb::EMPTY;
+            for i in start..end {
+                bbox = Aabb::from_aabbs(bbox, objects[i].bounding_box());
+            }
+
+            let axis = bbox.longest_axis();
+            let object_span = end - start;
+            let (left, right): (Arc<dyn Hittable>, Arc<dyn Hittable>) = if object_span == 1 {
+                (objects[start].clone(), objects[start].clone())
+            } else if object_span == 2 {
+                let (a, b) = (objects[start].clone(), objects[start + 1].clone());
+                if box_compare(&*a, &*b, axis) == Ordering::Less {
+                    (a, b)
+                } else {
+                    (b, a)
+                }
+            } else {
+                objects[start..end].sort_by(|a, b| box_compare(&**a, &**b, axis));
+                let mid = start + object_span / 2;
+                (
+                    Arc::new(BvhNode::new(objects, start, mid)),
+                    Arc::new(BvhNode::new(objects, mid, end)),
+                )
+            };
+            Self { left, right, bbox }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="bvh.h | bvh_node constructor using longest axis"
+    bvh_node(std::vector<shared_ptr<hittable>>& objects, size_t start, size_t end) {
         bbox = aabb::empty;
         for (size_t object_index = start; object_index < end; object_index++)
             bbox = aabb(bbox, objects[object_index]->bounding_box());
 
         int axis = bbox.longest_axis();
+
         auto comparator = (axis == 0) ? box_x_compare
                         : (axis == 1) ? box_y_compare
                                       : box_z_compare;
+
         size_t object_span = end - start;
+
         if (object_span == 1) {
             left = right = objects[start];
         } else if (object_span == 2) {
@@ -314,11 +683,3 @@ To build the tree we recursively split the list of objects by sorting along a ra
     ```
   </Tab>
 </Tabs>
-
-## The Box Comparison Functions
-
-The comparator functions sort hittables by the minimum coordinate of their bounding box along a given axis. These are used when sorting the objects array before splitting.
-
-## Another BVH Optimization
-
-We can slightly pad bounding boxes by a small epsilon to avoid degenerate (zero-thickness) slabs on axis-aligned primitives. This prevents floating-point misses on flat objects.
