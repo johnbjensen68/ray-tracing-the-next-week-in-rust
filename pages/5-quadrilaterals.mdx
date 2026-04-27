@@ -264,12 +264,7 @@ $$ \mathbf{n} = \operatorname{unit\_vector}(\mathbf{u} \times \mathbf{v}) $$
 The plane is defined as all points $(x,y,z)$ that satisfy the equation $Ax + By + Cz = D$. Well, we
 know that $\mathbf{Q}$ lies on the plane, so that's enough to solve for $D$:
 
-$$
-\begin{aligned}
-D &= n_x Q_x + n_y Q_y + n_z Q_z \\
-  &= \mathbf{n} \cdot \mathbf{Q}
-\end{aligned}
-$$
+$$ D = n_x Q_x + n_y Q_y + n_z Q_z = \mathbf{n} \cdot \mathbf{Q} $$
 
 Add the planar values to the `quad` class:
 
@@ -528,23 +523,17 @@ $\mathbf{Q}$ to $\mathbf{P}$.
 
 Cross the equation for $\mathbf{p}$ with $\mathbf{u}$ and $\mathbf{v}$, respectively:
 
-$$
-\begin{aligned}
-\mathbf{u} \times \mathbf{p}
-  &= \mathbf{u} \times (\alpha \mathbf{u} + \beta \mathbf{v}) \\
-  &= \mathbf{u} \times \alpha \mathbf{u} + \mathbf{u} \times \beta \mathbf{v} \\
-  &= \alpha(\mathbf{u} \times \mathbf{u}) + \beta(\mathbf{u} \times \mathbf{v})
-\end{aligned}
-$$
+$$ \mathbf{u} \times \mathbf{p} = \mathbf{u} \times (\alpha \mathbf{u} + \beta \mathbf{v}) $$
 
-$$
-\begin{aligned}
-\mathbf{v} \times \mathbf{p}
-  &= \mathbf{v} \times (\alpha \mathbf{u} + \beta \mathbf{v}) \\
-  &= \mathbf{v} \times \alpha \mathbf{u} + \mathbf{v} \times \beta \mathbf{v} \\
-  &= \alpha(\mathbf{v} \times \mathbf{u}) + \beta(\mathbf{v} \times \mathbf{v})
-\end{aligned}
-$$
+$$ \mathbf{u} \times \mathbf{p} = \mathbf{u} \times \alpha \mathbf{u} + \mathbf{u} \times \beta \mathbf{v} $$
+
+$$ \mathbf{u} \times \mathbf{p} = \alpha(\mathbf{u} \times \mathbf{u}) + \beta(\mathbf{u} \times \mathbf{v}) $$
+
+$$ \mathbf{v} \times \mathbf{p} = \mathbf{v} \times (\alpha \mathbf{u} + \beta \mathbf{v}) $$
+
+$$ \mathbf{v} \times \mathbf{p} = \mathbf{v} \times \alpha \mathbf{u} + \mathbf{v} \times \beta \mathbf{v} $$
+
+$$ \mathbf{v} \times \mathbf{p} = \alpha(\mathbf{v} \times \mathbf{u}) + \beta(\mathbf{v} \times \mathbf{v}) $$
 
 Since any vector crossed with itself yields zero, these equations simplify to
 
