@@ -258,40 +258,144 @@ The great thing is that it works for any axis-aligned rotation — you just rota
   </Tab>
 </Tabs>
 
-## A Cornell Box Scene with Blocks
+## A Box Object
 
-Now we can add the two boxes to the Cornell box scene. The tall box is rotated 15 degrees clockwise, and the short box is rotated 18 degrees counter-clockwise:
+The Cornell Box usually has two blocks in it. These are rotated relative to the walls. First,
+let's create a function that returns a box, by creating a `hittable_list` of six rectangles:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Cornell box with two blocks"
+    ```rust filename="quad.rs | A box object"
+    pub fn make_box(a: Point3, b: Point3, mat: Arc<dyn Material>) -> Arc<HittableList> {
+        // Returns the 3D box (six sides) that contains the two opposite vertices a & b.
+
+        let mut sides = HittableList::new();
+
+        // Construct the two opposite vertices with the minimum and maximum coordinates.
+        let min = Point3::new(a.x().min(b.x()), a.y().min(b.y()), a.z().min(b.z()));
+        let max = Point3::new(a.x().max(b.x()), a.y().max(b.y()), a.z().max(b.z()));
+
+        let dx = Vec3::new(max.x() - min.x(), 0.0, 0.0);
+        let dy = Vec3::new(0.0, max.y() - min.y(), 0.0);
+        let dz = Vec3::new(0.0, 0.0, max.z() - min.z());
+
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), max.z()),  dx,  dy, mat.clone()))); // front
+        sides.add(Arc::new(Quad::new(Point3::new(max.x(), min.y(), max.z()), -dz,  dy, mat.clone()))); // right
+        sides.add(Arc::new(Quad::new(Point3::new(max.x(), min.y(), min.z()), -dx,  dy, mat.clone()))); // back
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dz,  dy, mat.clone()))); // left
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), max.y(), max.z()),  dx, -dz, mat.clone()))); // top
+        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dx,  dz, mat))); // bottom
+
+        Arc::new(sides)
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="quad.h | A box object"
+    #include "hittable.h"
+    #include "hittable_list.h"
+
+    class quad : public hittable {
+        ...
+    };
+
+    inline shared_ptr<hittable_list> box(const point3& a, const point3& b, shared_ptr<material> mat)
+    {
+        // Returns the 3D box (six sides) that contains the two opposite vertices a & b.
+
+        auto sides = make_shared<hittable_list>();
+
+        // Construct the two opposite vertices with the minimum and maximum coordinates.
+        auto min = point3(std::fmin(a.x(),b.x()), std::fmin(a.y(),b.y()), std::fmin(a.z(),b.z()));
+        auto max = point3(std::fmax(a.x(),b.x()), std::fmax(a.y(),b.y()), std::fmax(a.z(),b.z()));
+
+        auto dx = vec3(max.x() - min.x(), 0, 0);
+        auto dy = vec3(0, max.y() - min.y(), 0);
+        auto dz = vec3(0, 0, max.z() - min.z());
+
+        sides->add(make_shared<quad>(point3(min.x(), min.y(), max.z()),  dx,  dy, mat)); // front
+        sides->add(make_shared<quad>(point3(max.x(), min.y(), max.z()), -dz,  dy, mat)); // right
+        sides->add(make_shared<quad>(point3(max.x(), min.y(), min.z()), -dx,  dy, mat)); // back
+        sides->add(make_shared<quad>(point3(min.x(), min.y(), min.z()),  dz,  dy, mat)); // left
+        sides->add(make_shared<quad>(point3(min.x(), max.y(), max.z()),  dx, -dz, mat)); // top
+        sides->add(make_shared<quad>(point3(min.x(), min.y(), min.z()),  dx,  dz, mat)); // bottom
+
+        return sides;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+Now we can add two blocks (but not rotated):
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Adding box objects"
+    fn cornell_box() -> HittableList {
+        // ...
+        world.add(make_box(Point3::new(130.0, 0.0,  65.0), Point3::new(295.0, 165.0, 230.0), white.clone()));
+        world.add(make_box(Point3::new(265.0, 0.0, 295.0), Point3::new(430.0, 330.0, 460.0), white.clone()));
+        // ...
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Adding box objects"
+    void cornell_box() {
+        // ...
+        world.add(box(point3(130, 0,  65), point3(295, 165, 230), white));
+        world.add(box(point3(265, 0, 295), point3(430, 330, 460), white));
+        // ...
+    }
+    ```
+  </Tab>
+</Tabs>
+
+This gives:
+
+<Img src="img-2.20-cornell-blocks.png" caption="Cornell box with two blocks" />
+
+Now that we have boxes, we need to rotate them a bit to have them match the *real* Cornell box. In
+ray tracing, this is usually done with an *instance*. An instance is a copy of a geometric
+primitive that has been placed into the scene. This instance is entirely independent of the other
+copies of the primitive and can be moved or rotated. In this case, our geometric primitive is our
+hittable `box` object, and we want to rotate it. This is especially easy in ray tracing because we
+don't actually need to move objects in the scene; instead we move the rays in the opposite
+direction.
+
+## A Cornell Box Scene with Rotated Blocks
+
+Now we can rotate the two boxes. The tall box is rotated 15 degrees clockwise, and the short box
+is rotated 18 degrees counter-clockwise:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Cornell box with two blocks rotated"
     let box1 = make_box(Point3::new(0.0,0.0,0.0), Point3::new(165.0,330.0,165.0), white.clone());
-    let box1 = Arc::new(RotateY::new(Arc::new(box1),  15.0));
-    let box1 = Arc::new(Translate::new(box1, Vec3::new(265.0,0.0,295.0)));
+    let box1 = Arc::new(RotateY::new(box1,  15.0));
+    let box1 = Arc::new(Translate::new(box1, Vec3::new(265.0, 0.0, 295.0)));
     world.add(box1);
 
     let box2 = make_box(Point3::new(0.0,0.0,0.0), Point3::new(165.0,165.0,165.0), white.clone());
-    let box2 = Arc::new(RotateY::new(Arc::new(box2), -18.0));
-    let box2 = Arc::new(Translate::new(box2, Vec3::new(130.0,0.0,65.0)));
+    let box2 = Arc::new(RotateY::new(box2, -18.0));
+    let box2 = Arc::new(Translate::new(box2, Vec3::new(130.0, 0.0, 65.0)));
     world.add(box2);
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="main.cc | Cornell box with two blocks"
+    ```cpp filename="main.cc | Cornell box with two blocks rotated"
     shared_ptr<hittable> box1 = box(point3(0,0,0), point3(165,330,165), white);
     box1 = make_shared<rotate_y>(box1,  15);
-    box1 = make_shared<translate>(box1, vec3(265,0,295));
+    box1 = make_shared<translate>(box1, vec3(265, 0, 295));
     world.add(box1);
 
     shared_ptr<hittable> box2 = box(point3(0,0,0), point3(165,165,165), white);
     box2 = make_shared<rotate_y>(box2, -18);
-    box2 = make_shared<translate>(box2, vec3(130,0,65));
+    box2 = make_shared<translate>(box2, vec3(130, 0, 65));
     world.add(box2);
     ```
   </Tab>
 </Tabs>
-
-This produces the standard Cornell box image:
-
-<Fig src="img-2.20-cornell-blocks.png" caption="Standard Cornell box" />
