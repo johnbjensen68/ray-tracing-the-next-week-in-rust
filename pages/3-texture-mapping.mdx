@@ -1,8 +1,10 @@
 # Texture Mapping
 
+Texture mapping in computer graphics is the process of applying a material effect to an object in the scene. The "texture" part is the effect, and the "mapping" part is the mathematical mapping from one space to another. The effect can be any property that we're trying to visualize: color, shininess, bump geometry (bump mapping), or even material presence (to create cut-out surfaces). The most common type of texture maps an image onto a surface to define the color at each point. In practice we implement this in reverse: given a point on the surface, the texture lookup returns the color.
+
 ## Constant Color Texture
 
-Until now, materials have stored a single color. We generalize this with a `Texture` trait so that any function from a surface point to a color can be used. The simplest texture is a constant color.
+We start with a `Texture` trait so that any function mapping from a surface point to a color can be used as a texture. The simplest texture is a constant color — but we also add a convenience constructor that takes raw RGB values so callers don't always need to construct a `Color` first.
 
 <Tabs>
   <Tab label="Rust">
@@ -19,6 +21,10 @@ Until now, materials have stored a single color. We generalize this with a `Text
         pub fn new(albedo: Color) -> Self {
             Self { albedo }
         }
+
+        pub fn from_rgb(red: f64, green: f64, blue: f64) -> Self {
+            Self { albedo: Color::new(red, green, blue) }
+        }
     }
 
     impl Texture for SolidColor {
@@ -30,7 +36,10 @@ Until now, materials have stored a single color. We generalize this with a `Text
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="texture.h | texture class and solid_color"
+    ```cpp filename="texture.h | A texture class"
+    #ifndef TEXTURE_H
+    #define TEXTURE_H
+
     class texture {
       public:
         virtual ~texture() = default;
@@ -41,11 +50,51 @@ Until now, materials have stored a single color. We generalize this with a `Text
       public:
         solid_color(const color& albedo) : albedo(albedo) {}
 
+        solid_color(double red, double green, double blue)
+          : solid_color(color(red, green, blue)) {}
+
         color value(double u, double v, const point3& p) const override {
             return albedo;
         }
+
       private:
         color albedo;
+    };
+
+    #endif
+    ```
+  </Tab>
+</Tabs>
+
+The `hit_record` structure needs to carry $u,v$ surface coordinates at each ray-object intersection so textures can look up their value there.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="hittable.rs | Adding u,v coordinates to HitRecord"
+    pub struct HitRecord {
+        pub p: Point3,
+        pub normal: Vec3,
+        pub mat: Arc<dyn Material>,
+        pub t: f64,
+        pub u: f64,
+        pub v: f64,
+        pub front_face: bool,
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="hittable.h | Adding u,v coordinates to hit_record"
+    class hit_record {
+      public:
+        point3 p;
+        vec3 normal;
+        shared_ptr<material> mat;
+        double t;
+        double u;
+        double v;
+        bool front_face;
+        // ...
     };
     ```
   </Tab>
@@ -53,7 +102,7 @@ Until now, materials have stored a single color. We generalize this with a `Text
 
 ## Solid Textures: A Checker Texture
 
-A checker texture alternates between two textures based on the sign of a trig function applied to the point coordinates. Because the function depends on the 3D position, it tiles through space — it's a solid (or 3D) texture.
+A checker texture alternates between two textures based on the sign of a trig function applied to the 3D point coordinates. Because the function depends on the 3D position, it tiles through space — it's a solid (or spatial) texture. The `value()` function ignores `u` and `v`, using only `p`. We also add a convenience constructor that accepts raw colors so callers don't need to wrap them in `SolidColor` manually.
 
 <Tabs>
   <Tab label="Rust">
@@ -67,6 +116,14 @@ A checker texture alternates between two textures based on the sign of a trig fu
     impl CheckerTexture {
         pub fn new(scale: f64, even: Arc<dyn Texture>, odd: Arc<dyn Texture>) -> Self {
             Self { inv_scale: 1.0 / scale, even, odd }
+        }
+
+        pub fn from_colors(scale: f64, c1: Color, c2: Color) -> Self {
+            Self::new(
+                scale,
+                Arc::new(SolidColor::new(c1)),
+                Arc::new(SolidColor::new(c2)),
+            )
         }
     }
 
@@ -92,6 +149,11 @@ A checker texture alternates between two textures based on the sign of a trig fu
         checker_texture(double scale, shared_ptr<texture> even, shared_ptr<texture> odd)
           : inv_scale(1.0 / scale), even(even), odd(odd) {}
 
+        checker_texture(double scale, const color& c1, const color& c2)
+          : checker_texture(scale,
+                            make_shared<solid_color>(c1),
+                            make_shared<solid_color>(c2)) {}
+
         color value(double u, double v, const point3& p) const override {
             auto xInt = int(std::floor(inv_scale * p.x()));
             auto yInt = int(std::floor(inv_scale * p.y()));
@@ -99,6 +161,7 @@ A checker texture alternates between two textures based on the sign of a trig fu
             bool isEven = (xInt + yInt + zInt) % 2 == 0;
             return isEven ? even->value(u, v, p) : odd->value(u, v, p);
         }
+
       private:
         double inv_scale;
         shared_ptr<texture> even, odd;
@@ -107,23 +170,221 @@ A checker texture alternates between two textures based on the sign of a trig fu
   </Tab>
 </Tabs>
 
+Now we update `Lambertian` to hold a texture instead of a raw color, calling `tex.value(rec.u, rec.v, rec.p)` at scatter time.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="material.rs | Lambertian material with texture"
+    pub struct Lambertian {
+        tex: Arc<dyn Texture>,
+    }
+
+    impl Lambertian {
+        pub fn new(albedo: Color) -> Self {
+            Self { tex: Arc::new(SolidColor::new(albedo)) }
+        }
+
+        pub fn from_texture(tex: Arc<dyn Texture>) -> Self {
+            Self { tex }
+        }
+    }
+
+    impl Material for Lambertian {
+        fn scatter(
+            &self, r_in: &Ray, rec: &HitRecord,
+            attenuation: &mut Color, scattered: &mut Ray,
+        ) -> bool {
+            let mut scatter_direction = rec.normal + random_unit_vector();
+            if scatter_direction.near_zero() {
+                scatter_direction = rec.normal;
+            }
+            *scattered = Ray::new(rec.p, scatter_direction, r_in.time());
+            *attenuation = self.tex.value(rec.u, rec.v, &rec.p);
+            true
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="material.h | Lambertian material with texture"
+    class lambertian : public material {
+      public:
+        lambertian(const color& albedo) : tex(make_shared<solid_color>(albedo)) {}
+        lambertian(shared_ptr<texture> tex) : tex(tex) {}
+
+        bool scatter(const ray& r_in, const hit_record& rec,
+                     color& attenuation, ray& scattered) const override {
+            auto scatter_direction = rec.normal + random_unit_vector();
+            if (scatter_direction.near_zero())
+                scatter_direction = rec.normal;
+            scattered = ray(rec.p, scatter_direction, r_in.time());
+            attenuation = tex->value(rec.u, rec.v, rec.p);
+            return true;
+        }
+
+      private:
+        shared_ptr<texture> tex;
+    };
+    ```
+  </Tab>
+</Tabs>
+
+Here is the checker applied to the ground plane in the bouncing-spheres scene:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Checkered texture in use"
+    fn bouncing_spheres() {
+        let mut world = HittableList::new();
+
+        let checker = Arc::new(CheckerTexture::from_colors(
+            0.32,
+            Color::new(0.2, 0.3, 0.1),
+            Color::new(0.9, 0.9, 0.9),
+        ));
+        world.add(Arc::new(Sphere::new_stationary(
+            Point3::new(0.0, -1000.0, 0.0),
+            1000.0,
+            Arc::new(Lambertian::from_texture(checker)),
+        )));
+        // ...
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Checkered texture in use"
+    void bouncing_spheres() {
+        hittable_list world;
+
+        auto checker = make_shared<checker_texture>(0.32,
+            color(.2, .3, .1), color(.9, .9, .9));
+        world.add(make_shared<sphere>(point3(0,-1000,0), 1000,
+            make_shared<lambertian>(checker)));
+        // ...
+    }
+    ```
+  </Tab>
+</Tabs>
+
 <Img src="img-2.02-checker-ground.png" caption="Spheres on checkered ground" />
 
 ## Rendering The Solid Checker Texture
 
-Here is a scene with two large spheres using the checker texture — one on the floor and one in the air. The checker pattern tiles through all 3D space, so both spheres show the same tiling.
+To manage multiple scenes we refactor `main()` into named scene functions and dispatch with a switch.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Main dispatching to selected scene"
+    fn main() {
+        match 2 {
+            1 => bouncing_spheres(),
+            2 => checkered_spheres(),
+            _ => {}
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Main dispatching to selected scene"
+    int main() {
+        switch (2) {
+            case 1: bouncing_spheres(); break;
+            case 2: checkered_spheres(); break;
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+Here is a scene with two large spheres using the checker texture. The checker pattern tiles through all 3D space, so both spheres show the same tiling wherever their surfaces cut through it.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Two checkered spheres"
+    fn checkered_spheres() {
+        let mut world = HittableList::new();
+
+        let checker = Arc::new(CheckerTexture::from_colors(
+            0.32,
+            Color::new(0.2, 0.3, 0.1),
+            Color::new(0.9, 0.9, 0.9),
+        ));
+        world.add(Arc::new(Sphere::new_stationary(
+            Point3::new(0.0, -10.0, 0.0), 10.0,
+            Arc::new(Lambertian::from_texture(checker.clone())),
+        )));
+        world.add(Arc::new(Sphere::new_stationary(
+            Point3::new(0.0, 10.0, 0.0), 10.0,
+            Arc::new(Lambertian::from_texture(checker)),
+        )));
+
+        let mut cam = Camera::new();
+        cam.aspect_ratio      = 16.0 / 9.0;
+        cam.image_width       = 400;
+        cam.samples_per_pixel = 100;
+        cam.max_depth         = 50;
+        cam.vfov              = 20.0;
+        cam.lookfrom          = Point3::new(13.0, 2.0, 3.0);
+        cam.lookat            = Point3::new(0.0, 0.0, 0.0);
+        cam.vup               = Vec3::new(0.0, 1.0, 0.0);
+        cam.defocus_angle     = 0.0;
+        cam.render(&world);
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Two checkered spheres"
+    void checkered_spheres() {
+        hittable_list world;
+
+        auto checker = make_shared<checker_texture>(0.32,
+            color(.2, .3, .1), color(.9, .9, .9));
+        world.add(make_shared<sphere>(point3(0,-10, 0), 10,
+            make_shared<lambertian>(checker)));
+        world.add(make_shared<sphere>(point3(0, 10, 0), 10,
+            make_shared<lambertian>(checker)));
+
+        camera cam;
+        cam.aspect_ratio      = 16.0 / 9.0;
+        cam.image_width       = 400;
+        cam.samples_per_pixel = 100;
+        cam.max_depth         = 50;
+        cam.vfov     = 20;
+        cam.lookfrom = point3(13,2,3);
+        cam.lookat   = point3(0,0,0);
+        cam.vup      = vec3(0,1,0);
+        cam.defocus_angle = 0;
+        cam.render(world);
+    }
+    ```
+  </Tab>
+</Tabs>
 
 <Img src="img-2.03-checker-spheres.png" caption="Checkered spheres" />
 
 ## Texture Coordinates for Spheres
 
-For image textures we need UV coordinates — a 2D parameterization of the surface. For a sphere we use the standard spherical mapping: `u` runs 0–1 around the equator and `v` runs 0–1from south pole to north pole.
+Constant textures ignore coordinates; spatial textures use 3D position. Now we focus on proper $u,v$ texture coordinates — a 2D parameterization of the surface needed for image textures.
+
+For a sphere we use spherical coordinates. Let $\theta$ be the angle up from the bottom pole (i.e., from $-Y$) and $\phi$ be the angle around the $Y$ axis (from $-X$ toward $+Z$). We normalize to $[0,1]$:
+
+$$u = \frac{\phi}{2\pi}, \quad v = \frac{\theta}{\pi}$$
+
+For a unit sphere centered at the origin these angles are computed as:
+
+$$\phi = \operatorname{atan2}(-z,\, x) + \pi, \quad \theta = \arccos(-y)$$
 
 <Tabs>
   <Tab label="Rust">
     ```rust filename="sphere.rs | get_sphere_uv"
     fn get_sphere_uv(p: &Point3) -> (f64, f64) {
-        // p: a point on the unit sphere
+        // p: a given point on the sphere of radius one, centered at the origin.
+        // u: angle around the Y axis from X=-1, mapped to [0,1].
+        // v: angle from Y=-1 to Y=+1, mapped to [0,1].
         let theta = (-p.y()).acos();
         let phi = (-p.z()).atan2(p.x()) + std::f64::consts::PI;
         let u = phi / (2.0 * std::f64::consts::PI);
@@ -134,13 +395,51 @@ For image textures we need UV coordinates — a 2D parameterization of the surfa
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="sphere.h | get_sphere_uv"
+    ```cpp filename="sphere.h | get_sphere_uv function"
     static void get_sphere_uv(const point3& p, double& u, double& v) {
-        // p: a point on the unit sphere
+        // p: a given point on the sphere of radius one, centered at the origin.
+        // u: returned value [0,1] of angle around the Y axis from X=-1.
+        // v: returned value [0,1] of angle from Y=-1 to Y=+1.
         auto theta = std::acos(-p.y());
         auto phi = std::atan2(-p.z(), p.x()) + pi;
-        u = phi / (2 * pi);
+        u = phi / (2*pi);
         v = theta / pi;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+We call `get_sphere_uv` inside the sphere's `hit()` method and store the results in `rec.u` and `rec.v`.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="sphere.rs | Sphere UV coordinates from hit"
+    fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+        // ... (intersection test) ...
+        rec.t = root;
+        rec.p = r.at(rec.t);
+        let outward_normal = (rec.p - self.center.at(r.time())) / self.radius;
+        rec.set_face_normal(r, outward_normal);
+        let (u, v) = get_sphere_uv(&outward_normal);
+        rec.u = u;
+        rec.v = v;
+        rec.mat = self.mat.clone();
+        true
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="sphere.h | Sphere UV coordinates from hit"
+    bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
+        // ... (intersection test) ...
+        rec.t = root;
+        rec.p = r.at(rec.t);
+        vec3 outward_normal = (rec.p - current_center) / radius;
+        rec.set_face_normal(r, outward_normal);
+        get_sphere_uv(outward_normal, rec.u, rec.v);
+        rec.mat = mat;
+        return true;
     }
     ```
   </Tab>
@@ -148,7 +447,7 @@ For image textures we need UV coordinates — a 2D parameterization of the surfa
 
 ## Accessing Texture Image Data
 
-For image textures we load an image file (e.g., a JPEG) and sample it at UV coordinates. We clamp out-of-range UV values so they don't panic or produce garbage.
+For image textures we load an image file and sample it at $u,v$ coordinates. We clamp out-of-range values and flip $v$ since image row 0 is at the top but $v=0$ is at the bottom. A solid cyan return guards against missing image files.
 
 <Tabs>
   <Tab label="Rust">
@@ -168,6 +467,9 @@ For image textures we load an image file (e.g., a JPEG) and sample it at UV coor
 
     impl Texture for ImageTexture {
         fn value(&self, u: f64, v: f64, _p: &Point3) -> Color {
+            if self.image.height() == 0 {
+                return Color::new(0.0, 1.0, 1.0);
+            }
             let u = u.clamp(0.0, 1.0);
             let v = 1.0 - v.clamp(0.0, 1.0);
             let i = (u * self.image.width() as f64) as u32;
@@ -199,9 +501,10 @@ For image textures we load an image file (e.g., a JPEG) and sample it at UV coor
             auto i = int(u * image.width());
             auto j = int(v * image.height());
             auto pixel = image.pixel_data(i, j);
-            auto scale = 1.0 / 255.0;
-            return color(scale*pixel[0], scale*pixel[1], scale*pixel[2]);
+            auto color_scale = 1.0 / 255.0;
+            return color(color_scale*pixel[0], color_scale*pixel[1], color_scale*pixel[2]);
         }
+
       private:
         rtw_image image;
     };
@@ -209,10 +512,74 @@ For image textures we load an image file (e.g., a JPEG) and sample it at UV coor
   </Tab>
 </Tabs>
 
-<Img src="earthmap.jpg" caption="The earth texture image" />
-
 ## Rendering The Image Texture
 
-By mapping an earth image onto a sphere using our UV coordinates, we can render a globe. The earth texture is applied so the equator aligns with the sphere's equator.
+By mapping an earth image onto a sphere using our UV coordinates, we can render a globe.
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="main.rs | Rendering with a texture map of Earth"
+    fn earth() {
+        let earth_texture = Arc::new(ImageTexture::new("earthmap.jpg"));
+        let earth_surface = Arc::new(Lambertian::from_texture(earth_texture));
+        let globe = Arc::new(Sphere::new_stationary(
+            Point3::new(0.0, 0.0, 0.0), 2.0, earth_surface,
+        ));
+
+        let mut cam = Camera::new();
+        cam.aspect_ratio      = 16.0 / 9.0;
+        cam.image_width       = 400;
+        cam.samples_per_pixel = 100;
+        cam.max_depth         = 50;
+        cam.vfov              = 20.0;
+        cam.lookfrom          = Point3::new(0.0, 0.0, 12.0);
+        cam.lookat            = Point3::new(0.0, 0.0, 0.0);
+        cam.vup               = Vec3::new(0.0, 1.0, 0.0);
+        cam.defocus_angle     = 0.0;
+        cam.render(&HittableList::from(globe));
+    }
+
+    fn main() {
+        match 3 {
+            1 => bouncing_spheres(),
+            2 => checkered_spheres(),
+            3 => earth(),
+            _ => {}
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="main.cc | Rendering with a texture map of Earth"
+    void earth() {
+        auto earth_texture = make_shared<image_texture>("earthmap.jpg");
+        auto earth_surface = make_shared<lambertian>(earth_texture);
+        auto globe = make_shared<sphere>(point3(0,0,0), 2, earth_surface);
+
+        camera cam;
+        cam.aspect_ratio      = 16.0 / 9.0;
+        cam.image_width       = 400;
+        cam.samples_per_pixel = 100;
+        cam.max_depth         = 50;
+        cam.vfov     = 20;
+        cam.lookfrom = point3(0,0,12);
+        cam.lookat   = point3(0,0,0);
+        cam.vup      = vec3(0,1,0);
+        cam.defocus_angle = 0;
+
+        cam.render(hittable_list(globe));
+    }
+
+    int main() {
+        switch (3) {
+            case 1: bouncing_spheres(); break;
+            case 2: checkered_spheres(); break;
+            case 3: earth();            break;
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
 
 <Img src="img-2.05-earth-sphere.png" caption="Earth-mapped sphere" />
