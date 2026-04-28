@@ -433,8 +433,7 @@ where
 
 $$ \mathbf{p} = \mathbf{P} - \mathbf{Q} $$
 
-$$ \mathbf{w} = \frac{\mathbf{n}}{\mathbf{n} \cdot (\mathbf{u} \times \mathbf{v})}
-              = \frac{\mathbf{n}}{\mathbf{n} \cdot \mathbf{n}} $$
+$$ \mathbf{w} = \frac{\mathbf{n}}{\mathbf{n} \cdot (\mathbf{u} \times \mathbf{v})} = \frac{\mathbf{n}}{\mathbf{n} \cdot \mathbf{n}} $$
 
 The vector $\mathbf{w}$ is constant for a given quadrilateral, so we'll cache that value.
 
@@ -546,35 +545,28 @@ divide by vectors. Instead, we can take the dot product of both sides of the abo
 the plane normal $\mathbf{n} = \mathbf{u} \times \mathbf{v}$, reducing both sides to scalars, which
 we *can* divide by.
 
-$$ \mathbf{n} \cdot (\mathbf{v} \times \mathbf{p})
-   = \mathbf{n} \cdot \alpha(\mathbf{v} \times \mathbf{u}) $$
+$$ \mathbf{n} \cdot (\mathbf{v} \times \mathbf{p}) = \mathbf{n} \cdot \alpha(\mathbf{v} \times \mathbf{u}) $$
 
-$$ \mathbf{n} \cdot (\mathbf{u} \times \mathbf{p})
-   = \mathbf{n} \cdot \beta(\mathbf{u} \times \mathbf{v}) $$
+$$ \mathbf{n} \cdot (\mathbf{u} \times \mathbf{p}) = \mathbf{n} \cdot \beta(\mathbf{u} \times \mathbf{v}) $$
 
 Now isolating the coefficients is a simple matter of division:
 
-$$ \alpha = \frac{\mathbf{n} \cdot (\mathbf{v} \times \mathbf{p})}
-                 {\mathbf{n} \cdot (\mathbf{v} \times \mathbf{u})} $$
+$$ \alpha = \frac{\mathbf{n} \cdot (\mathbf{v} \times \mathbf{p})}{\mathbf{n} \cdot (\mathbf{v} \times \mathbf{u})} $$
 
-$$ \beta  = \frac{\mathbf{n} \cdot (\mathbf{u} \times \mathbf{p})}
-                 {\mathbf{n} \cdot (\mathbf{u} \times \mathbf{v})} $$
+$$ \beta  = \frac{\mathbf{n} \cdot (\mathbf{u} \times \mathbf{p})}{\mathbf{n} \cdot (\mathbf{u} \times \mathbf{v})} $$
 
 Reversing the cross products for both the numerator and denominator of $\alpha$ (recall that
 $\mathbf{a} \times \mathbf{b} = - \mathbf{b} \times \mathbf{a}$) gives us a common denominator for
 both coefficients:
 
-$$ \alpha = \frac{\mathbf{n} \cdot (\mathbf{p} \times \mathbf{v})}
-                 {\mathbf{n} \cdot (\mathbf{u} \times \mathbf{v})} $$
+$$ \alpha = \frac{\mathbf{n} \cdot (\mathbf{p} \times \mathbf{v})}{\mathbf{n} \cdot (\mathbf{u} \times \mathbf{v})} $$
 
-$$ \beta  = \frac{\mathbf{n} \cdot (\mathbf{u} \times \mathbf{p})}
-                 {\mathbf{n} \cdot (\mathbf{u} \times \mathbf{v})} $$
+$$ \beta  = \frac{\mathbf{n} \cdot (\mathbf{u} \times \mathbf{p})}{\mathbf{n} \cdot (\mathbf{u} \times \mathbf{v})} $$
 
 Now we can perform one final simplification, computing a vector $\mathbf{w}$ that will be constant
 for the plane's basis frame, for any planar point $\mathbf{P}$:
 
-$$ \mathbf{w} = \frac{\mathbf{n}}{\mathbf{n} \cdot (\mathbf{u} \times \mathbf{v})}
-              = \frac{\mathbf{n}}{\mathbf{n} \cdot \mathbf{n}} $$
+$$ \mathbf{w} = \frac{\mathbf{n}}{\mathbf{n} \cdot (\mathbf{u} \times \mathbf{v})} = \frac{\mathbf{n}}{\mathbf{n} \cdot \mathbf{n}} $$
 
 $$ \alpha = \mathbf{w} \cdot (\mathbf{p} \times \mathbf{v}) $$
 $$ \beta  = \mathbf{w} \cdot (\mathbf{u} \times \mathbf{p}) $$
