@@ -1,14 +1,37 @@
 # Volumes
 
+One thing it's nice to add to a ray tracer is smoke/fog/mist. These are sometimes called *volumes*
+or *participating media*. Another feature that is nice to add is subsurface scattering, which is
+sort of like dense fog inside an object. This usually adds software architectural mayhem because
+volumes are a different animal than surfaces, but a cute technique is to make a volume a random
+surface. A bunch of smoke can be replaced with a surface that probabilistically might or might not
+be there at every point in the volume. This will make more sense when you see the code.
+
 ## Constant Density Mediums
 
-Volumes (participating media) like fog, smoke, or clouds scatter light as a ray passes through them. We model a constant-density medium where there is a fixed probability per unit length that the ray scatters. This gives an exponential distribution for how far the ray travels before scattering.
+First, let's start with a volume of constant density. A ray going through there can either scatter
+inside the volume, or it can make it all the way through like the middle ray in the figure. More
+thin transparent volumes, like a light fog, are more likely to have rays like the middle one. How
+far the ray has to travel through the volume also determines how likely it is for the ray to make
+it through.
 
-The trick is to wrap any convex boundary object with a `ConstantMedium` that intercepts rays passing through the boundary and probabilistically scatters them.
+<Fig src="fig-2.10-ray-vol.jpg" caption="Ray-volume interaction" />
+
+As the ray passes through the volume, it may scatter at any point. The denser the volume, the more
+likely that is. The probability that the ray scatters in any small distance $\Delta L$ is:
+
+$$ \mathit{probability} = C \cdot \Delta L $$
+
+where $C$ is proportional to the optical density of the volume. If you go through all the
+differential equations, for a random number you get a distance where the scattering occurs. If that
+distance is outside the volume, then there is no "hit". For a constant volume we just need the
+density $C$ and the boundary. I'll use another hittable for the boundary.
+
+The resulting class is:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="constant_medium.rs | ConstantMedium"
+    ```rust filename="constant_medium.rs | Constant medium class"
     pub struct ConstantMedium {
         boundary: Arc<dyn Hittable>,
         neg_inv_density: f64,
@@ -16,7 +39,15 @@ The trick is to wrap any convex boundary object with a `ConstantMedium` that int
     }
 
     impl ConstantMedium {
-        pub fn new(boundary: Arc<dyn Hittable>, density: f64, albedo: Color) -> Self {
+        pub fn new(boundary: Arc<dyn Hittable>, density: f64, tex: Arc<dyn Texture>) -> Self {
+            Self {
+                boundary,
+                neg_inv_density: -1.0 / density,
+                phase_function: Arc::new(Isotropic::new(tex)),
+            }
+        }
+
+        pub fn from_color(boundary: Arc<dyn Hittable>, density: f64, albedo: Color) -> Self {
             Self {
                 boundary,
                 neg_inv_density: -1.0 / density,
@@ -30,24 +61,40 @@ The trick is to wrap any convex boundary object with a `ConstantMedium` that int
             let mut rec1 = HitRecord::default();
             let mut rec2 = HitRecord::default();
 
-            if !self.boundary.hit(r, Interval::UNIVERSE, &mut rec1) { return false; }
-            if !self.boundary.hit(r, Interval::new(rec1.t + 0.0001, f64::INFINITY), &mut rec2) { return false; }
+            if !self.boundary.hit(r, Interval::UNIVERSE, &mut rec1) {
+                return false;
+            }
 
-            let t_min = rec1.t.max(ray_t.min);
-            let t_max = rec2.t.min(ray_t.max);
-            if t_min >= t_max { return false; }
+            if !self.boundary.hit(r, Interval::new(rec1.t + 0.0001, f64::INFINITY), &mut rec2) {
+                return false;
+            }
 
-            let ray_length = r.direction.length();
-            let distance_inside_boundary = (t_max - t_min) * ray_length;
+            if rec1.t < ray_t.min { rec1.t = ray_t.min; }
+            if rec2.t > ray_t.max { rec2.t = ray_t.max; }
+
+            if rec1.t >= rec2.t {
+                return false;
+            }
+
+            if rec1.t < 0.0 {
+                rec1.t = 0.0;
+            }
+
+            let ray_length = r.direction().length();
+            let distance_inside_boundary = (rec2.t - rec1.t) * ray_length;
             let hit_distance = self.neg_inv_density * random_double().ln();
 
-            if hit_distance > distance_inside_boundary { return false; }
+            if hit_distance > distance_inside_boundary {
+                return false;
+            }
 
-            rec.t = t_min + hit_distance / ray_length;
+            rec.t = rec1.t + hit_distance / ray_length;
             rec.p = r.at(rec.t);
+
             rec.normal = Vec3::new(1.0, 0.0, 0.0); // arbitrary
-            rec.front_face = true;
+            rec.front_face = true;                 // also arbitrary
             rec.mat = self.phase_function.clone();
+
             true
         }
 
@@ -59,51 +106,91 @@ The trick is to wrap any convex boundary object with a `ConstantMedium` that int
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="constant_medium.h | constant_medium"
+    ```cpp filename="constant_medium.h | Constant medium class"
+    #ifndef CONSTANT_MEDIUM_H
+    #define CONSTANT_MEDIUM_H
+
+    #include "hittable.h"
+    #include "material.h"
+    #include "texture.h"
+
     class constant_medium : public hittable {
       public:
+        constant_medium(shared_ptr<hittable> boundary, double density, shared_ptr<texture> tex)
+          : boundary(boundary), neg_inv_density(-1/density),
+            phase_function(make_shared<isotropic>(tex))
+        {}
+
         constant_medium(shared_ptr<hittable> boundary, double density, const color& albedo)
-          : boundary(boundary),
-            neg_inv_density(-1 / density),
+          : boundary(boundary), neg_inv_density(-1/density),
             phase_function(make_shared<isotropic>(albedo))
         {}
 
         bool hit(const ray& r, interval ray_t, hit_record& rec) const override {
             hit_record rec1, rec2;
-            if (!boundary->hit(r, interval::universe, rec1)) return false;
-            if (!boundary->hit(r, interval(rec1.t + 0.0001, infinity), rec2)) return false;
-            auto t_min = std::fmax(rec1.t, ray_t.min);
-            auto t_max = std::fmin(rec2.t, ray_t.max);
-            if (t_min >= t_max) return false;
+
+            if (!boundary->hit(r, interval::universe, rec1))
+                return false;
+
+            if (!boundary->hit(r, interval(rec1.t+0.0001, infinity), rec2))
+                return false;
+
+            if (rec1.t < ray_t.min) rec1.t = ray_t.min;
+            if (rec2.t > ray_t.max) rec2.t = ray_t.max;
+
+            if (rec1.t >= rec2.t)
+                return false;
+
+            if (rec1.t < 0)
+                rec1.t = 0;
+
             auto ray_length = r.direction().length();
-            auto distance_inside_boundary = (t_max - t_min) * ray_length;
+            auto distance_inside_boundary = (rec2.t - rec1.t) * ray_length;
             auto hit_distance = neg_inv_density * std::log(random_double());
-            if (hit_distance > distance_inside_boundary) return false;
-            rec.t = t_min + hit_distance / ray_length;
+
+            if (hit_distance > distance_inside_boundary)
+                return false;
+
+            rec.t = rec1.t + hit_distance / ray_length;
             rec.p = r.at(rec.t);
+
             rec.normal = vec3(1,0,0);  // arbitrary
-            rec.front_face = true;
+            rec.front_face = true;     // also arbitrary
             rec.mat = phase_function;
+
             return true;
         }
 
         aabb bounding_box() const override { return boundary->bounding_box(); }
+
       private:
         shared_ptr<hittable> boundary;
         double neg_inv_density;
         shared_ptr<material> phase_function;
     };
+
+    #endif
     ```
   </Tab>
 </Tabs>
 
-The `Isotropic` material scatters the ray in a completely random direction (uniform sphere distribution). This models media where light scatters equally in all directions.
+The scattering function of isotropic picks a uniform random direction:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="material.rs | Isotropic"
+    ```rust filename="material.rs | The isotropic class"
     pub struct Isotropic {
-        albedo: Arc<dyn Texture>,
+        tex: Arc<dyn Texture>,
+    }
+
+    impl Isotropic {
+        pub fn new(tex: Arc<dyn Texture>) -> Self {
+            Self { tex }
+        }
+
+        pub fn from_color(albedo: Color) -> Self {
+            Self { tex: Arc::new(SolidColor::new(albedo)) }
+        }
     }
 
     impl Material for Isotropic {
@@ -111,8 +198,8 @@ The `Isotropic` material scatters the ray in a completely random direction (unif
             &self, r_in: &Ray, rec: &HitRecord,
             attenuation: &mut Color, scattered: &mut Ray,
         ) -> bool {
-            *scattered = Ray::new(rec.p, Vec3::random_unit_vector(), r_in.time);
-            *attenuation = self.albedo.value(rec.u, rec.v, &rec.p);
+            *scattered = Ray::new(rec.p, Vec3::random_unit_vector(), r_in.time());
+            *attenuation = self.tex.value(rec.u, rec.v, &rec.p);
             true
         }
     }
@@ -120,18 +207,19 @@ The `Isotropic` material scatters the ray in a completely random direction (unif
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="material.h | isotropic"
+    ```cpp filename="material.h | The isotropic class"
     class isotropic : public material {
       public:
         isotropic(const color& albedo) : tex(make_shared<solid_color>(albedo)) {}
         isotropic(shared_ptr<texture> tex) : tex(tex) {}
 
-        bool scatter(const ray& r_in, const hit_record& rec,
-                     color& attenuation, ray& scattered) const override {
+        bool scatter(const ray& r_in, const hit_record& rec, color& attenuation, ray& scattered)
+        const override {
             scattered = ray(rec.p, random_unit_vector(), r_in.time());
             attenuation = tex->value(rec.u, rec.v, rec.p);
             return true;
         }
+
       private:
         shared_ptr<texture> tex;
     };
@@ -139,47 +227,157 @@ The `Isotropic` material scatters the ray in a completely random direction (unif
   </Tab>
 </Tabs>
 
+The reason we have to be so careful about the logic around the boundary is we need to make sure
+this works for ray origins inside the volume. In clouds, things bounce around a lot so that is a
+common case.
+
+In addition, the above code assumes that once a ray exits the constant medium boundary, it will
+continue forever outside the boundary. Put another way, it assumes that the boundary shape is
+convex. So this particular implementation will work for boundaries like boxes or spheres, but will
+not work with toruses or shapes that contain voids. It's possible to write an implementation that
+handles arbitrary shapes, but we'll leave that as an exercise for the reader.
+
 ## Rendering a Cornell Box with Smoke and Fog Boxes
 
-We replace the two solid boxes in the Cornell Box with constant-density media. One becomes black smoke and the other becomes white fog. With enough samples, the scattering produces realistic volume rendering.
+If we replace the two blocks with smoke and fog (dark and light particles), and make the light
+bigger (and dimmer so it doesn't blow out the scene) for faster convergence:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Cornell box with volumes"
-    let box1 = make_box(
-        Point3::new(0.0,0.0,0.0),
-        Point3::new(165.0,330.0,165.0),
-        white.clone()
-    );
-    let box1 = Arc::new(RotateY::new(Arc::new(box1), 15.0));
-    let box1 = Arc::new(Translate::new(box1, Vec3::new(265.0,0.0,295.0)));
-    world.add(Arc::new(ConstantMedium::new(box1, 0.01, Color::new(0.0,0.0,0.0))));
+    ```rust filename="main.rs | Cornell box, with smoke"
+    fn cornell_smoke() -> HittableList {
+        let mut world = HittableList::new();
 
-    let box2 = make_box(
-        Point3::new(0.0,0.0,0.0),
-        Point3::new(165.0,165.0,165.0),
-        white.clone()
-    );
-    let box2 = Arc::new(RotateY::new(Arc::new(box2), -18.0));
-    let box2 = Arc::new(Translate::new(box2, Vec3::new(130.0,0.0,65.0)));
-    world.add(Arc::new(ConstantMedium::new(box2, 0.01, Color::new(1.0,1.0,1.0))));
+        let red   = Arc::new(Lambertian::from_color(Color::new(0.65, 0.05, 0.05)));
+        let white = Arc::new(Lambertian::from_color(Color::new(0.73, 0.73, 0.73)));
+        let green = Arc::new(Lambertian::from_color(Color::new(0.12, 0.45, 0.15)));
+        let light = Arc::new(DiffuseLight::from_color(Color::new(7.0, 7.0, 7.0)));
+
+        world.add(Arc::new(Quad::new(Point3::new(555.0,   0.0,   0.0), Vec3::new(  0.0, 555.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), green)));
+        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(  0.0, 555.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), red)));
+        world.add(Arc::new(Quad::new(Point3::new(113.0, 554.0, 127.0), Vec3::new(330.0,   0.0,   0.0), Vec3::new(  0.0,   0.0, 305.0), light)));
+        world.add(Arc::new(Quad::new(Point3::new(  0.0, 555.0,   0.0), Vec3::new(555.0,   0.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), white.clone())));
+        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(555.0,   0.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), white.clone())));
+        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0, 555.0), Vec3::new(555.0,   0.0,   0.0), Vec3::new(  0.0, 555.0,   0.0), white.clone())));
+
+        let box1 = make_box(Point3::new(0.0,0.0,0.0), Point3::new(165.0,330.0,165.0), white.clone());
+        let box1: Arc<dyn Hittable> = Arc::new(RotateY::new(box1, 15.0));
+        let box1: Arc<dyn Hittable> = Arc::new(Translate::new(box1, Vec3::new(265.0, 0.0, 295.0)));
+
+        let box2 = make_box(Point3::new(0.0,0.0,0.0), Point3::new(165.0,165.0,165.0), white.clone());
+        let box2: Arc<dyn Hittable> = Arc::new(RotateY::new(box2, -18.0));
+        let box2: Arc<dyn Hittable> = Arc::new(Translate::new(box2, Vec3::new(130.0, 0.0, 65.0)));
+
+        world.add(Arc::new(ConstantMedium::from_color(box1, 0.01, Color::new(0.0, 0.0, 0.0))));
+        world.add(Arc::new(ConstantMedium::from_color(box2, 0.01, Color::new(1.0, 1.0, 1.0))));
+
+        world
+    }
+
+    fn main() {
+        match 8 {
+            1 => bouncing_spheres(),
+            2 => checkered_spheres(),
+            3 => earth(),
+            4 => perlin_spheres(),
+            5 => quads(),
+            6 => simple_light(),
+            7 => cornell_box(),
+            8 => {
+                let world = cornell_smoke();
+                let mut cam = Camera::default();
+                cam.aspect_ratio      = 1.0;
+                cam.image_width       = 600;
+                cam.samples_per_pixel = 200;
+                cam.max_depth         = 50;
+                cam.background        = Color::new(0.0, 0.0, 0.0);
+                cam.vfov              = 40.0;
+                cam.lookfrom          = Point3::new(278.0, 278.0, -800.0);
+                cam.lookat            = Point3::new(278.0, 278.0, 0.0);
+                cam.vup               = Vec3::new(0.0, 1.0, 0.0);
+                cam.defocus_angle     = 0.0;
+                cam.render(&world);
+            }
+            _ => {}
+        }
+    }
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="main.cc | Cornell box with volumes"
-    shared_ptr<hittable> box1 = box(point3(0,0,0), point3(165,330,165), white);
-    box1 = make_shared<rotate_y>(box1, 15);
-    box1 = make_shared<translate>(box1, vec3(265,0,295));
+    ```cpp filename="main.cc | Cornell box, with smoke"
+    #include "bvh.h"
+    #include "camera.h"
+    #include "constant_medium.h"
+    #include "hittable.h"
+    #include "hittable_list.h"
+    #include "material.h"
+    #include "quad.h"
+    #include "sphere.h"
+    #include "texture.h"
 
-    shared_ptr<hittable> box2 = box(point3(0,0,0), point3(165,165,165), white);
-    box2 = make_shared<rotate_y>(box2, -18);
-    box2 = make_shared<translate>(box2, vec3(130,0,65));
+    // ...
 
-    world.add(make_shared<constant_medium>(box1, 0.01, color(0,0,0)));
-    world.add(make_shared<constant_medium>(box2, 0.01, color(1,1,1)));
+    void cornell_smoke() {
+        hittable_list world;
+
+        auto red   = make_shared<lambertian>(color(.65, .05, .05));
+        auto white = make_shared<lambertian>(color(.73, .73, .73));
+        auto green = make_shared<lambertian>(color(.12, .45, .15));
+        auto light = make_shared<diffuse_light>(color(7, 7, 7));
+
+        world.add(make_shared<quad>(point3(555,0,0),    vec3(0,555,0), vec3(0,0,555), green));
+        world.add(make_shared<quad>(point3(0,0,0),      vec3(0,555,0), vec3(0,0,555), red));
+        world.add(make_shared<quad>(point3(113,554,127),vec3(330,0,0), vec3(0,0,305), light));
+        world.add(make_shared<quad>(point3(0,555,0),    vec3(555,0,0), vec3(0,0,555), white));
+        world.add(make_shared<quad>(point3(0,0,0),      vec3(555,0,0), vec3(0,0,555), white));
+        world.add(make_shared<quad>(point3(0,0,555),    vec3(555,0,0), vec3(0,555,0), white));
+
+        shared_ptr<hittable> box1 = box(point3(0,0,0), point3(165,330,165), white);
+        box1 = make_shared<rotate_y>(box1, 15);
+        box1 = make_shared<translate>(box1, vec3(265,0,295));
+
+        shared_ptr<hittable> box2 = box(point3(0,0,0), point3(165,165,165), white);
+        box2 = make_shared<rotate_y>(box2, -18);
+        box2 = make_shared<translate>(box2, vec3(130,0,65));
+
+        world.add(make_shared<constant_medium>(box1, 0.01, color(0,0,0)));
+        world.add(make_shared<constant_medium>(box2, 0.01, color(1,1,1)));
+
+        camera cam;
+
+        cam.aspect_ratio      = 1.0;
+        cam.image_width       = 600;
+        cam.samples_per_pixel = 200;
+        cam.max_depth         = 50;
+        cam.background        = color(0,0,0);
+
+        cam.vfov     = 40;
+        cam.lookfrom = point3(278, 278, -800);
+        cam.lookat   = point3(278, 278, 0);
+        cam.vup      = vec3(0,1,0);
+
+        cam.defocus_angle = 0;
+
+        cam.render(world);
+    }
+
+    int main() {
+        switch (8) {
+            case 1:  bouncing_spheres();   break;
+            case 2:  checkered_spheres();  break;
+            case 3:  earth();              break;
+            case 4:  perlin_spheres();     break;
+            case 5:  quads();              break;
+            case 6:  simple_light();       break;
+            case 7:  cornell_box();        break;
+            case 8:  cornell_smoke();      break;
+        }
+    }
     ```
   </Tab>
 </Tabs>
+
+We get:
 
 <Img src="img-2.22-cornell-smoke.png" caption="Cornell box with blocks of smoke" />
