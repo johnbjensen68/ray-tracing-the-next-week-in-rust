@@ -1,28 +1,20 @@
 # A Scene Testing All New Features
 
-Let's put it all together and make the image on the cover of this book. There's nothing really new here; it's just a big scene that exercises everything we've built.
+Let's put it all together, with a big thin mist covering everything, and a blue subsurface
+reflection sphere (we didn't implement that explicitly, but a volume inside a dielectric is what a
+subsurface material is). The biggest limitation left in the renderer is no shadow rays, but that is
+why we get caustics and subsurface for free. It's a double-edged design decision.
 
-The scene contains:
-- A large ground made from many random-colored boxes
-- A single motion-blurred sphere
-- A sphere with an earth image texture
-- A sphere with the Perlin noise texture (marble-like)
-- A quad light source
-- A glass sphere (dielectric)
-- A metal sphere
-- A sphere with subsurface scattering (glass boundary + constant medium)
-- Global atmospheric fog (constant medium over the entire scene)
-- A rotating, translated cloud of white spheres
+Also note that we'll parameterize this final scene to support a lower quality render for quick
+testing.
 
 <Tabs>
   <Tab label="Rust">
     ```rust filename="main.rs | Final scene"
-    pub fn final_scene(image_width: u32, samples_per_pixel: u32, max_depth: i32) {
-        let mut world = HittableList::new();
-
-        // Ground: many small random-colored boxes
+    fn final_scene(image_width: u32, samples_per_pixel: u32, max_depth: i32) {
         let mut boxes1 = HittableList::new();
         let ground = Arc::new(Lambertian::from_color(Color::new(0.48, 0.83, 0.53)));
+
         let boxes_per_side = 20;
         for i in 0..boxes_per_side {
             for j in 0..boxes_per_side {
@@ -33,98 +25,83 @@ The scene contains:
                 let x1 = x0 + w;
                 let y1 = random_double_range(1.0, 101.0);
                 let z1 = z0 + w;
-                boxes1.add(Arc::new(make_box(
-                    Point3::new(x0, y0, z0),
-                    Point3::new(x1, y1, z1),
-                    ground.clone(),
-                )));
+
+                boxes1.add(make_box(Point3::new(x0,y0,z0), Point3::new(x1,y1,z1), ground.clone()));
             }
         }
+
+        let mut world = HittableList::new();
+
         world.add(Arc::new(BvhNode::from_list(boxes1)));
 
-        // Light
         let light = Arc::new(DiffuseLight::from_color(Color::new(7.0, 7.0, 7.0)));
-        world.add(Arc::new(Quad::new(
-            Point3::new(123.0, 554.0, 147.0),
-            Vec3::new(300.0, 0.0, 0.0),
-            Vec3::new(0.0, 0.0, 265.0),
-            light,
-        )));
+        world.add(Arc::new(Quad::new(Point3::new(123.0,554.0,147.0), Vec3::new(300.0,0.0,0.0), Vec3::new(0.0,0.0,265.0), light)));
 
-        // Motion blur sphere
         let center1 = Point3::new(400.0, 400.0, 200.0);
         let center2 = center1 + Vec3::new(30.0, 0.0, 0.0);
-        let sphere_mat = Arc::new(Lambertian::from_color(Color::new(0.7, 0.3, 0.1)));
-        world.add(Arc::new(Sphere::new_moving(center1, center2, 50.0, sphere_mat)));
+        let sphere_material = Arc::new(Lambertian::from_color(Color::new(0.7, 0.3, 0.1)));
+        world.add(Arc::new(Sphere::new_moving(center1, center2, 50.0, sphere_material)));
 
-        // Glass sphere
+        world.add(Arc::new(Sphere::new(Point3::new(260.0, 150.0, 45.0), 50.0, Arc::new(Dielectric::new(1.5)))));
         world.add(Arc::new(Sphere::new(
-            Point3::new(260.0, 150.0, 45.0), 50.0,
-            Arc::new(Dielectric::new(1.5)),
+            Point3::new(0.0, 150.0, 145.0), 50.0, Arc::new(Metal::new(Color::new(0.8, 0.8, 0.9), 1.0))
         )));
 
-        // Metal sphere
-        world.add(Arc::new(Sphere::new(
-            Point3::new(0.0, 150.0, 145.0), 50.0,
-            Arc::new(Metal::new(Color::new(0.8, 0.8, 0.9), 1.0)),
-        )));
-
-        // Subsurface sphere (glass + constant medium)
-        let boundary = Arc::new(Sphere::new(
-            Point3::new(360.0, 150.0, 145.0), 70.0,
-            Arc::new(Dielectric::new(1.5)),
-        ));
+        let boundary = Arc::new(Sphere::new(Point3::new(360.0,150.0,145.0), 70.0, Arc::new(Dielectric::new(1.5))));
         world.add(boundary.clone());
-        world.add(Arc::new(ConstantMedium::new(boundary, 0.2, Color::new(0.2, 0.4, 0.9))));
+        world.add(Arc::new(ConstantMedium::from_color(boundary, 0.2, Color::new(0.2, 0.4, 0.9))));
+        let boundary = Arc::new(Sphere::new(Point3::new(0.0,0.0,0.0), 5000.0, Arc::new(Dielectric::new(1.5))));
+        world.add(Arc::new(ConstantMedium::from_color(boundary, 0.0001, Color::new(1.0,1.0,1.0))));
 
-        // Fog sphere around the whole scene
-        let boundary2 = Arc::new(Sphere::new(
-            Point3::new(0.0, 0.0, 0.0), 5000.0,
-            Arc::new(Dielectric::new(1.5)),
-        ));
-        world.add(Arc::new(ConstantMedium::new(boundary2, 0.0001, Color::new(1.0, 1.0, 1.0))));
+        let emat = Arc::new(Lambertian::new(Arc::new(ImageTexture::new("earthmap.jpg"))));
+        world.add(Arc::new(Sphere::new(Point3::new(400.0,200.0,400.0), 100.0, emat)));
+        let pertext = Arc::new(NoiseTexture::new(0.2));
+        world.add(Arc::new(Sphere::new(Point3::new(220.0,280.0,300.0), 80.0, Arc::new(Lambertian::new(pertext)))));
 
-        // Earth sphere
-        let earth_texture = Arc::new(ImageTexture::new("earthmap.jpg"));
-        world.add(Arc::new(Sphere::new(
-            Point3::new(400.0, 200.0, 400.0), 100.0,
-            Arc::new(Lambertian::new(earth_texture)),
-        )));
-
-        // Perlin noise sphere
-        let perlin_texture = Arc::new(NoiseTexture::new(0.2));
-        world.add(Arc::new(Sphere::new(
-            Point3::new(220.0, 280.0, 300.0), 80.0,
-            Arc::new(Lambertian::new(perlin_texture)),
-        )));
-
-        // Box of spheres (cloud)
         let mut boxes2 = HittableList::new();
         let white = Arc::new(Lambertian::from_color(Color::new(0.73, 0.73, 0.73)));
         let ns = 1000;
         for _ in 0..ns {
-            boxes2.add(Arc::new(Sphere::new(
-                Point3::random_range(0.0, 165.0), 10.0, white.clone(),
-            )));
+            boxes2.add(Arc::new(Sphere::new(Point3::random_range(0.0, 165.0), 10.0, white.clone())));
         }
+
         world.add(Arc::new(Translate::new(
-            Arc::new(RotateY::new(Arc::new(BvhNode::from_list(boxes2)), 15.0)),
-            Vec3::new(-100.0, 270.0, 395.0),
+            Arc::new(RotateY::new(
+                Arc::new(BvhNode::from_list(boxes2)), 15.0)),
+                Vec3::new(-100.0,270.0,395.0)
         )));
 
-        // Camera
         let mut cam = Camera::default();
-        cam.aspect_ratio = 1.0;
-        cam.image_width = image_width;
+
+        cam.aspect_ratio      = 1.0;
+        cam.image_width       = image_width;
         cam.samples_per_pixel = samples_per_pixel;
-        cam.max_depth = max_depth;
-        cam.background = Color::new(0.0, 0.0, 0.0);
-        cam.vfov = 40.0;
+        cam.max_depth         = max_depth;
+        cam.background        = Color::new(0.0, 0.0, 0.0);
+
+        cam.vfov     = 40.0;
         cam.lookfrom = Point3::new(478.0, 278.0, -600.0);
-        cam.lookat = Point3::new(278.0, 278.0, 0.0);
-        cam.vup = Vec3::new(0.0, 1.0, 0.0);
+        cam.lookat   = Point3::new(278.0, 278.0, 0.0);
+        cam.vup      = Vec3::new(0.0, 1.0, 0.0);
+
         cam.defocus_angle = 0.0;
+
         cam.render(&world);
+    }
+
+    fn main() {
+        match 9 {
+            1 => bouncing_spheres(),
+            2 => checkered_spheres(),
+            3 => earth(),
+            4 => perlin_spheres(),
+            5 => quads(),
+            6 => simple_light(),
+            7 => cornell_box(),
+            8 => cornell_smoke(),
+            9 => final_scene(800, 10000, 40),
+            _ => final_scene(400,   250,  4),
+        }
     }
     ```
   </Tab>
@@ -145,11 +122,13 @@ The scene contains:
                 auto x1 = x0 + w;
                 auto y1 = random_double(1,101);
                 auto z1 = z0 + w;
+
                 boxes1.add(box(point3(x0,y0,z0), point3(x1,y1,z1), ground));
             }
         }
 
         hittable_list world;
+
         world.add(make_shared<bvh_node>(boxes1));
 
         auto light = make_shared<diffuse_light>(color(7, 7, 7));
@@ -191,46 +170,23 @@ The scene contains:
         );
 
         camera cam;
+
         cam.aspect_ratio      = 1.0;
         cam.image_width       = image_width;
         cam.samples_per_pixel = samples_per_pixel;
         cam.max_depth         = max_depth;
         cam.background        = color(0,0,0);
+
         cam.vfov     = 40;
         cam.lookfrom = point3(478, 278, -600);
         cam.lookat   = point3(278, 278, 0);
         cam.vup      = vec3(0,1,0);
+
         cam.defocus_angle = 0;
+
         cam.render(world);
     }
-    ```
-  </Tab>
-</Tabs>
 
-The `final_scene()` function takes three parameters — `image_width`, `samples_per_pixel`, and `max_depth` — so you can quickly render a low-quality preview or a full high-quality image. The `main()` function below selects which scene to render; setting the switch to case 9 renders the full final scene:
-
-<Tabs>
-  <Tab label="Rust">
-    ```rust filename="main.rs | Choosing a scene"
-    fn main() {
-        match 9 {
-            1 => bouncing_spheres(),
-            2 => checkered_spheres(),
-            3 => earth(),
-            4 => perlin_spheres(),
-            5 => quads(),
-            6 => simple_light(),
-            7 => cornell_box(),
-            8 => cornell_smoke(),
-            9 => final_scene(800, 10000, 40),
-            _ => final_scene(400, 250, 4),
-        }
-    }
-    ```
-  </Tab>
-
-  <Tab label="C++">
-    ```cpp filename="main.cc | Choosing a scene"
     int main() {
         switch (9) {
             case 1:  bouncing_spheres();          break;
@@ -242,13 +198,18 @@ The `final_scene()` function takes three parameters — `image_width`, `samples_
             case 7:  cornell_box();               break;
             case 8:  cornell_smoke();             break;
             case 9:  final_scene(800, 10000, 40); break;
-            default: final_scene(400,  250,  4);  break;
+            default: final_scene(400,   250,  4); break;
         }
     }
     ```
   </Tab>
 </Tabs>
 
-<Fig src="img-2.23-book2-final.jpg" caption="Final scene" />
+Running it with 10,000 rays per pixel (sweet dreams) yields:
 
-Congratulations — you now have a "real" ray tracer! The features introduced in this book are the foundation of most production path tracers. From here, further reading might cover importance sampling, spectral rendering, bidirectional path tracing, and many other advanced topics.
+<Img src="img-2.23-book2-final.jpg" caption="Final scene" />
+
+Now go off and make a really cool image of your own!
+See [our Further Reading wiki page](https://github.com/RayTracing/raytracing.github.io/wiki/Further-Readings)
+for additional project related resources.
+Feel free to email questions, comments, and cool images to me at ptrshrl@gmail.com.
