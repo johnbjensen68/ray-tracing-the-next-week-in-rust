@@ -28,10 +28,12 @@ Each chapter presents Rust and C++ side-by-side using the `<Tabs>` / `<Tab>` com
 This is a **Next.js 13 + Nextra 2** documentation site using the `nextra-theme-docs` theme. Content is authored in MDX under `pages/`. Navigation order and sidebar labels are controlled by `pages/_meta.json`.
 
 **Content structure:**
-- `pages/index.mdx` — Introduction
-- `pages/1-motion-blur.mdx` through `pages/9-final-scene.mdx` — Chapters
+- `pages/1-overview.mdx` — Overview (chapter 1, also the landing page via a `/` → `/1-overview` redirect in `next.config.mjs`)
+- `pages/2-motion-blur.mdx` through `pages/10-final-scene.mdx` — Chapters
 - `pages/acknowledgements.mdx` — Acknowledgements
 - `pages/appendix/` — Appendix pages
+
+The chapter numbering matches the original book (Overview = ch. 1, Motion Blur = ch. 2, …, Final Scene = ch. 10).
 
 **Custom components** (registered globally in `theme.config.jsx` → `components`):
 - `<Fig src="..." caption="..." />` — Fixed 600px-wide figures, images resolved from `images/`

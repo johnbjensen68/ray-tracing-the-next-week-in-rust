@@ -1,13 +1,13 @@
 {
-  "index": "Introduction",
-  "1-motion-blur": "1. Motion Blur",
-  "2-bounding-volume-hierarchies": "2. Bounding Volume Hierarchies",
-  "3-texture-mapping": "3. Texture Mapping",
-  "4-perlin-noise": "4. Perlin Noise",
-  "5-quadrilaterals": "5. Quadrilaterals",
-  "6-lights": "6. Lights",
-  "7-instances": "7. Instances",
-  "8-volumes": "8. Volumes",
-  "9-final-scene": "9. A Scene Testing All New Features",
+  "1-overview": "1. Overview",
+  "2-motion-blur": "2. Motion Blur",
+  "3-bounding-volume-hierarchies": "3. Bounding Volume Hierarchies",
+  "4-texture-mapping": "4. Texture Mapping",
+  "5-perlin-noise": "5. Perlin Noise",
+  "6-quadrilaterals": "6. Quadrilaterals",
+  "7-lights": "7. Lights",
+  "8-instances": "8. Instances",
+  "9-volumes": "9. Volumes",
+  "10-final-scene": "10. A Scene Testing All New Features",
   "acknowledgements": "Acknowledgements"
 }

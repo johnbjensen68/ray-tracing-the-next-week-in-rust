@@ -14,4 +14,10 @@ const withNextra = nextra({
   defaultShowCopyCode: true,
 });
 
-export default withNextra({});
+export default withNextra({
+  async redirects() {
+    return [
+      { source: "/", destination: "/1-overview", permanent: false },
+    ];
+  },
+});
