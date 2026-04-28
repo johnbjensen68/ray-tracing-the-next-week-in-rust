@@ -49,3 +49,22 @@ This is a **Next.js 13 + Nextra 2** documentation site using the `nextra-theme-d
 **Analytics:** Vercel Analytics is injected in `pages/_app.mdx`.
 
 **LaTeX support** is enabled via `nextra` config (`latex: true`). Use standard `$...$` / `$$...$$` in MDX.
+
+## MDX/KaTeX gotchas
+
+Two patterns from the original book's Markdeep source break in MDX 2 + KaTeX and must be rewritten when porting a chapter:
+
+- `\begin{aligned}...\end{aligned}` — MDX 2 parses `{aligned}` as a JSX expression and fails with `ReferenceError: aligned is not defined` at deploy time. Replace each aligned block with separate single-line `$$...$$` equations.
+- **Multi-line `$$...$$` blocks** — even with both delimiters present, splitting the contents across lines causes KaTeX to mis-tokenize and emit `ParseError: Can't use function '$' in math mode`, which cascades into the rest of the page rendering as raw MDX source (you'll see `&lt;Tab&gt;` etc. in the HTML). Always keep `$$...$$` blocks on a single line.
+
+## Validating a ported chapter
+
+The user expects each chapter to match the original book word-for-word (modulo Rust/C++ translation in code listings). Workflow:
+
+1. **Edit and push.** The user prefers skipping local `pnpm build` — push and let Vercel build. Wait for deployment before verifying (poll the deployed URL with `curl` until new content appears; do not use `WebFetch`, which is cached).
+2. **Fetch deployed HTML:** `curl -s https://ray-tracing-the-next-week-in-rust.vercel.app/<slug>`.
+3. **Sanity-check rendering** before doing prose comparison:
+   - Count `<h2` tags — should match the number of `##` headings in the MDX.
+   - Grep for `&lt;Tab` or `&lt;/Tab` in the HTML. Any hit means MDX parsing broke partway down the page and the rest is rendering as raw source (usually a math syntax issue — see gotchas above).
+   - If KaTeX errored, the offending block appears inside `<span class="katex-error" title="ParseError: ...">` — the `title` attribute names the cause and the span's text content shows the broken source.
+4. **Word-by-word prose comparison** against the original Markdeep page (`https://raytracing.github.io/books/RayTracingTheNextWeek.html`). Strip HTML tags and code blocks from both sides, then diff the prose. The original book is the source of truth for narrative; only the code listings should differ (Rust added alongside C++).
