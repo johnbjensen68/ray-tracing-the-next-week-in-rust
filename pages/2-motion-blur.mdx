@@ -60,6 +60,8 @@ Since the "engine" of the ray tracer can just make sure the objects are where th
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 1: Ray with time information</div>
+
 ## Managing Time
 
 Before continuing, let's think about time, and how we might manage it across one or more successive renders. There are two aspects of shutter timing to think about: the time from one shutter opening to the next shutter opening, and how long the shutter stays open for each frame. Standard movie film used to be shot at 24 frames per second. Modern digital movies can be 24, 30, 48, 60, 120 or however many frames per second the director wants.
@@ -121,6 +123,8 @@ We need to modify the camera to generate rays at a random instant between the st
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 2: Camera with time information</div>
+
 ## Adding Moving Spheres
 
 Now to create a moving object. We'll update the sphere class so that its center moves linearly from `center1` at time=0 to `center2` at time=1. (It continues on indefinitely outside that time interval, so it really can be sampled at any time.) We'll do this by replacing the 3D center point with a 3D ray that describes the original position at time=0 and the displacement to the end position at time=1.
@@ -177,6 +181,8 @@ Now to create a moving object. We'll update the sphere class so that its center 
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 3: A moving sphere</div>
+
 The updated `hit()` function is almost identical to the old one — we just need to now determine the current position of the animated center:
 
 <Tabs>
@@ -228,6 +234,8 @@ The updated `hit()` function is almost identical to the old one — we just need
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 4: Moving sphere hit function</div>
 
 ## Tracking the Time of Ray Intersection
 
@@ -322,6 +330,8 @@ Now that rays have a time property, we need to update the `material::scatter()` 
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 5: Handle ray time in the material::scatter() methods</div>
 
 ## Putting Everything Together
 
@@ -458,5 +468,7 @@ The code below takes the example diffuse spheres from the scene at the end of th
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 6: Last book's final scene, but with moving spheres</div>
 
 <Img src="img-2.01-bouncing-spheres.png" caption="Bouncing spheres" />
