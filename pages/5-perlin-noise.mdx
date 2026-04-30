@@ -104,6 +104,8 @@ The simplest approach tiles space with a 3D array of random numbers. We use hash
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 34: A Perlin texture class and functions</div>
+
 We can use the Perlin class as a texture. A simple noise texture just maps the noise value to a grayscale color.
 
 <Tabs>
@@ -143,6 +145,8 @@ We can use the Perlin class as a texture. A simple noise texture just maps the n
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 35: Noise texture</div>
 
 <Img src="img-2.08-tile-random.jpg" caption="Tiled random patterns" />
 
@@ -227,6 +231,8 @@ We can use this as a scene to test it out:
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 36: Scene with two Perlin-textured spheres</div>
+
 ## Smoothing out the Result
 
 Using floor-indexed lookups produces a blocky result. We apply trilinear interpolation between the eight surrounding lattice points to smooth it out.
@@ -307,6 +313,8 @@ Using floor-indexed lookups produces a blocky result. We apply trilinear interpo
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 37: Perlin with trilinear interpolation</div>
+
 <Img src="img-2.10-perlin-trilerp.png" caption="Perlin texture with trilinear interpolation" />
 
 ## Improvement with Hermitian Smoothing
@@ -330,6 +338,8 @@ Simple linear interpolation shows Mach-band artifacts (stripes) where the interp
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 38: Perlin with Hermitian smoothing</div>
 
 <Img src="img-2.11-perlin-trilerp-smooth.png" caption="Perlin texture, trilinearly interpolated, smoothed" />
 
@@ -377,6 +387,8 @@ It is also a bit low frequency. We can scale the input point to make it vary mor
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 39: Perlin smoothed, higher frequency</div>
+
 <Img src="img-2.12-perlin-hifreq.png" caption="Perlin texture, higher frequency" />
 
 <Tabs>
@@ -415,6 +427,8 @@ It is also a bit low frequency. We can scale the input point to make it vary mor
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 40: Perlin-textured spheres with a scale to the noise</div>
 
 ## Using Random Vectors on the Lattice Points
 
@@ -560,6 +574,8 @@ Instead of random scalars, we place random unit vectors at each lattice point. T
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 41: Perlin with random unit translations</div>
+
 The output of `perlin_interp` can return negative values. These negative values will be passed to the gamma-correction function, which expects only positive inputs. To fix this, we map the $[-1, +1]$ range to $[0, 1]$.
 
 <Tabs>
@@ -581,6 +597,8 @@ The output of `perlin_interp` can return negative values. These negative values 
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 44: Perlin smoothed, higher frequency</div>
 
 <Img src="img-2.13-perlin-shift.png" caption="Perlin texture, shifted off integer values" />
 
@@ -622,6 +640,8 @@ Very often, a composite noise that has multiple summed frequencies is used. This
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 45: Turbulence function</div>
+
 Used directly, turbulence gives a sort of camouflage netting appearance.
 
 <Tabs>
@@ -643,6 +663,8 @@ Used directly, turbulence gives a sort of camouflage netting appearance.
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 46: Noise texture with turbulence</div>
 
 <Img src="img-2.14-perlin-turb.png" caption="Perlin texture with turbulence" />
 
@@ -668,5 +690,7 @@ However, usually turbulence is used indirectly. For example, the "hello world" o
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 47: Noise texture with marbled texture</div>
 
 <Img src="img-2.15-perlin-marble.png" caption="Perlin noise, marbled texture" />

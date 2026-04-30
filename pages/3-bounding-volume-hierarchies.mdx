@@ -60,6 +60,8 @@ We also add an `expand` helper to `Interval` for padding a bounding box by a sma
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 7: interval::expand() method</div>
+
 <Tabs>
   <Tab label="Rust">
     ```rust filename="aabb.rs | AABB definition"
@@ -135,6 +137,8 @@ We also add an `expand` helper to `Interval` for padding a bounding box by a sma
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 8: Axis-aligned bounding box class</div>
+
 ## Ray Intersection with an AABB
 
 The slab method tests a ray against an AABB by intersecting it with three pairs of planes (one per axis) and checking if the resulting intervals overlap. If they all overlap, the ray hits the box.
@@ -189,6 +193,8 @@ The slab method tests a ray against an AABB by intersecting it with three pairs 
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 8: Axis-aligned bounding box class (hit function)</div>
+
 ## Constructing Bounding Boxes for Hittables
 
 Every hittable object needs a method to return its AABB. We add `bounding_box` to the `Hittable` trait.
@@ -214,6 +220,8 @@ Every hittable object needs a method to return its AABB. We add `bounding_box` t
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 9: Hittable class with bounding box</div>
 
 For a stationary sphere, the bounding box is straightforward: center ± radius on each axis.
 
@@ -266,6 +274,8 @@ For a stationary sphere, the bounding box is straightforward: center ± radius o
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 10: Sphere with bounding box</div>
+
 For a moving sphere we need a box that encloses the entire trajectory. We compute boxes at `t=0` and `t=1` and take their union. The union of two AABBs requires a helper on both `Interval` and `Aabb`:
 
 <Tabs>
@@ -292,6 +302,8 @@ For a moving sphere we need a box that encloses the entire trajectory. We comput
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 12: Interval constructor from two intervals</div>
 
 <Tabs>
   <Tab label="Rust">
@@ -333,6 +345,8 @@ For a moving sphere we need a box that encloses the entire trajectory. We comput
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 11: Moving sphere with bounding box</div>
 
 ## Creating Bounding Boxes of Lists of Objects
 
@@ -381,6 +395,8 @@ A `HittableList`'s bounding box is the union of the bounding boxes of all its ch
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 14: Hittable list with bounding box</div>
 
 ## The BVH Node Class
 
@@ -440,6 +456,8 @@ The BVH node is itself a `Hittable`. It stores two children (also `Hittable`s, w
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 15: Bounding volume hierarchy</div>
+
 ## Splitting BVH Volumes
 
 To build the tree we recursively split the list of objects. The simplest strategy: pick a random axis, sort the primitives along it, and split the sorted list in half. The recursion bottoms out at one or two objects.
@@ -464,6 +482,8 @@ We also need a small utility to generate random integers:
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 17: A function to return random integers in a range</div>
 
 <Tabs>
   <Tab label="Rust">
@@ -525,6 +545,8 @@ We also need a small utility to generate random integers:
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 16: Bounding volume hierarchy node</div>
+
 ## The Box Comparison Functions
 
 The comparators sort hittables by the minimum of their bounding box interval along a given axis.
@@ -569,6 +591,8 @@ The comparators sort hittables by the minimum of their bounding box interval alo
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 18: BVH comparison function, X-axis</div>
+
 ## Using the BVH
 
 Wrapping the world in a BVH node is a one-line change. The BVH will restructure the list into a tree; all subsequent ray queries traverse the tree instead of scanning every object.
@@ -586,6 +610,8 @@ Wrapping the world in a BVH node is a one-line change. The BVH will restructure 
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 19: Random spheres, using BVH</div>
 
 ## Another BVH Optimization
 
@@ -641,6 +667,8 @@ First we add `longest_axis()` to `Aabb`, along with `empty` and `universe` senti
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 21: New aabb constants and longest_axis() function</div>
 
 Now we update the BVH constructor: compute the bounding box for the entire span upfront, pick the longest axis, then sort and split as before.
 
@@ -709,3 +737,5 @@ Now we update the BVH constructor: compute the bounding box for the entire span 
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 20: Building the bbox for the span of BVH objects</div>

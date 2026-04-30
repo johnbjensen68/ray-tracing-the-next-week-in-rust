@@ -104,6 +104,8 @@ constructed AABBs always have a non-zero volume:
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 48: New aabb::pad_to_minimums() method</div>
+
 Now we're ready for the first sketch of the new `quad` class:
 
 <Tabs>
@@ -184,6 +186,8 @@ Now we're ready for the first sketch of the new `quad` class:
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 49: 2D quadrilateral (parallelogram) class</div>
 
 ## Ray-Plane Intersection
 
@@ -327,6 +331,8 @@ Add the planar values to the `quad` class:
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 50: Caching the planar values</div>
+
 We will use the two values `normal` and `D` to find the point of intersection between a given ray
 and the plane containing the quadrilateral.
 
@@ -390,6 +396,8 @@ our quadrilateral.
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 51: hit() method for the infinite plane</div>
 
 ## Orienting Points on The Plane
 
@@ -499,6 +507,8 @@ The vector $\mathbf{w}$ is constant for a given quadrilateral, so we'll cache th
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 52: Caching the quadrilateral's w value</div>
 
 ## Deriving the Planar Coordinates
 
@@ -712,6 +722,8 @@ test method from the hit method.
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 53: Final quad class</div>
+
 And now we add a new scene to demonstrate our new `quad` primitive:
 
 <Tabs>
@@ -827,6 +839,8 @@ And now we add a new scene to demonstrate our new `quad` primitive:
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 54: A new scene with quads</div>
 
 <Img src="img-2.16-quads.png" caption="Quads" />
 

@@ -60,6 +60,8 @@ the ray what color it is and performs no reflection. It's very simple:
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 55: A diffuse light class</div>
+
 So that we don't have to make all the non-emitting materials implement `emitted()`, the base trait
 returns black:
 
@@ -101,6 +103,8 @@ returns black:
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 56: New emitted function in class material</div>
+
 ## Adding Background Color to the Ray Color Function
 
 Next, we want a pure black background so the only light in the scene is coming from the emitters. To
@@ -135,6 +139,8 @@ the new `color_from_emission` value.
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 57: ray_color function with background and emitting materials</div>
 
 <Tabs>
   <Tab label="Rust">
@@ -185,6 +191,8 @@ the new `color_from_emission` value.
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 57: ray_color function with background and emitting materials</div>
 
 `main()` is updated to set the background color for the prior scenes:
 
@@ -268,6 +276,8 @@ the new `color_from_emission` value.
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 58: Specifying new background color</div>
 
 Since we're removing the code that we used to determine the color of the sky when a ray hit it, we
 need to pass in a new color value for our old scene renders. We've elected to stick with a flat
@@ -377,6 +387,8 @@ If we set up a rectangle as a light:
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 59: A simple rectangle light</div>
+
 We get:
 
 <Img src="img-2.17-rect-light.png" caption="Scene with rectangle light source" />
@@ -418,6 +430,8 @@ Fool around with making some spheres lights too.
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 60: A simple rectangle light plus illuminating ball</div>
 
 <Img src="img-2.18-rect-sphere-light.png" caption="Scene with rectangle and sphere light sources" />
 
@@ -525,6 +539,8 @@ Let's make the 5 walls and the light of the box:
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 61: Cornell box scene, empty</div>
 
 We get:
 

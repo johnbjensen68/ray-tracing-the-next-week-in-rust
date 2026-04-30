@@ -66,6 +66,8 @@ We start with a `Texture` trait so that any function mapping from a surface poin
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 22: A texture class</div>
+
 The `hit_record` structure needs to carry $u,v$ surface coordinates at each ray-object intersection so textures can look up their value there.
 
 <Tabs>
@@ -99,6 +101,8 @@ The `hit_record` structure needs to carry $u,v$ surface coordinates at each ray-
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 23: Adding u,v coordinates to the hit_record</div>
 
 ## Solid Textures: A Checker Texture
 
@@ -170,6 +174,8 @@ A checker texture alternates between two textures based on the sign of a trig fu
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 24: Checkered texture</div>
+
 Now we update `Lambertian` to hold a texture instead of a raw color, calling `tex.value(rec.u, rec.v, rec.p)` at scatter time.
 
 <Tabs>
@@ -230,6 +236,8 @@ Now we update `Lambertian` to hold a texture instead of a raw color, calling `te
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 25: Lambertian material with texture</div>
+
 Here is the checker applied to the ground plane in the bouncing-spheres scene:
 
 <Tabs>
@@ -268,6 +276,8 @@ Here is the checker applied to the ground plane in the bouncing-spheres scene:
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 26: Checkered texture in use</div>
+
 <Img src="img-2.02-checker-ground.png" caption="Spheres on checkered ground" />
 
 ## Rendering The Solid Checker Texture
@@ -298,6 +308,8 @@ To manage multiple scenes we refactor `main()` into named scene functions and di
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 27: Main dispatching to selected scene</div>
 
 Here is a scene with two large spheres using the checker texture. The checker pattern tiles through all 3D space, so both spheres show the same tiling wherever their surfaces cut through it.
 
@@ -364,6 +376,8 @@ Here is a scene with two large spheres using the checker texture. The checker pa
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 28: Two checkered spheres</div>
+
 <Img src="img-2.03-checker-spheres.png" caption="Checkered spheres" />
 
 ## Texture Coordinates for Spheres
@@ -409,6 +423,8 @@ $$\phi = \operatorname{atan2}(-z,\, x) + \pi, \quad \theta = \arccos(-y)$$
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 29: get_sphere_uv function</div>
+
 We call `get_sphere_uv` inside the sphere's `hit()` method and store the results in `rec.u` and `rec.v`.
 
 <Tabs>
@@ -444,6 +460,8 @@ We call `get_sphere_uv` inside the sphere's `hit()` method and store the results
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 30: Sphere UV coordinates from hit</div>
 
 ## Accessing Texture Image Data
 
@@ -511,6 +529,8 @@ For image textures we load an image file and sample it at $u,v$ coordinates. We 
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 32: Image texture class</div>
 
 ## Rendering The Image Texture
 
@@ -581,5 +601,7 @@ By mapping an earth image onto a sphere using our UV coordinates, we can render 
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 33: Rendering with a texture map of Earth</div>
 
 <Img src="img-2.05-earth-sphere.png" caption="Earth-mapped sphere" />

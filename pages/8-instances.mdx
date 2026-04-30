@@ -67,6 +67,8 @@ create a function that returns a box, by creating a `hittable_list` of six recta
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 62: A box object</div>
+
 Now we can add two blocks (but not rotated).
 
 <Tabs>
@@ -92,6 +94,8 @@ Now we can add two blocks (but not rotated).
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 63: Adding box objects</div>
 
 This gives:
 
@@ -173,6 +177,8 @@ make this happen.
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 64: Hittable translation hit function</div>
+
 ... and then flesh out the rest of the `translate` class:
 
 <Tabs>
@@ -226,6 +232,8 @@ make this happen.
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 65: Hittable translation class</div>
+
 We also need to remember to offset the bounding box, otherwise the incident ray might be looking in
 the wrong place and trivially reject the intersection. The expression `object.bounding_box() +
 offset` above requires some additional support.
@@ -266,6 +274,8 @@ offset` above requires some additional support.
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 66: The aabb + offset operator</div>
+
 Since each dimension of an `aabb` is represented as an interval, we'll need to extend `interval`
 with an addition operator as well.
 
@@ -300,6 +310,8 @@ with an addition operator as well.
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 67: The interval + displacement operator</div>
 
 ## Instance Rotation
 
@@ -466,6 +478,8 @@ We can now create a class for y-rotation. Let's tackle the hit function first:
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 68: Hittable rotate-Y hit function</div>
+
 ... and now for the rest of the class:
 
 <Tabs>
@@ -575,6 +589,8 @@ We can now create a class for y-rotation. Let's tackle the hit function first:
   </Tab>
 </Tabs>
 
+<div className="text-center text-sm italic mt-1 mb-4">Listing 69: Hittable rotate-Y class</div>
+
 And the changes to Cornell are:
 
 <Tabs>
@@ -618,6 +634,8 @@ And the changes to Cornell are:
     ```
   </Tab>
 </Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 70: Cornell scene with Y-rotated boxes</div>
 
 Which yields:
 
