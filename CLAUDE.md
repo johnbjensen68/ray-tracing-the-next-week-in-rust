@@ -40,7 +40,7 @@ The chapter numbering matches the original book (Overview = ch. 1, Motion Blur =
 - `<Img src="..." caption="..." style={...} />` — Responsive figures; PNG files get `image-rendering: pixelated` and skip Next.js optimization
 - `<Tabs storageKey="..." labels={[...]}>` / `<Tab label="...">` — Tab switcher that persists the selected tab to `localStorage` and compensates scroll position on tab change; default `storageKey` is `"tab.lang"`
 
-**Image handling:** All images live in `images/`. The `Img`/`Fig` components use `require("../images/" + src)`, so Next.js handles static import (blur placeholder, etc.). Add new images to `images/` before referencing them in MDX.
+**Image handling:** All images live in `images/`. The `Img`/`Fig` components use `require("../images/" + src)`, so Next.js handles static import (blur placeholder, etc.). Add new images to `images/` before referencing them in MDX. Upstream figures and renders live at `https://raytracing.github.io/images/<filename>` (e.g. `fig-2.01-bvol-hierarchy.jpg`, `img-2.05-earth-sphere.png`); when a chapter references one that's missing locally, fetch it from there.
 
 **Deployment:** The site is deployed to https://ray-tracing-the-next-week-in-rust.vercel.app/. After pushing changes, verify them there.
 
@@ -69,4 +69,8 @@ The user expects each chapter to match the original book word-for-word (modulo R
    - Count `<h2` tags — should match the number of `##` headings in the MDX.
    - Grep for `&lt;Tab` or `&lt;/Tab` in the HTML. Any hit means MDX parsing broke partway down the page and the rest is rendering as raw source (usually a math syntax issue — see gotchas above).
    - If KaTeX errored, the offending block appears inside `<span class="katex-error" title="ParseError: ...">` — the `title` attribute names the cause and the span's text content shows the broken source.
-4. **Word-by-word prose comparison** against the original Markdeep page (`https://raytracing.github.io/books/RayTracingTheNextWeek.html`). Strip HTML tags and code blocks from both sides, then diff the prose. The original book is the source of truth for narrative; only the code listings should differ (Rust added alongside C++).
+4. **Structural integrity check** against the original:
+   - Listing captions should appear in strictly ascending order with no gaps. `grep -oE "Listing [0-9]+" pages/<file>.mdx` should print `Listing 1, Listing 2, …` in sequence. Existing chapters had transpositions (12 before 11, 17 before 16, 21 before 20) — these are real bugs, not stylistic differences.
+   - One listing per original listing. The Rust port can be tempted to merge listings (e.g. fold a later constructor into an earlier class definition) since `impl` blocks compose freely; don't. Keep listing boundaries aligned with the original so listing numbers stay meaningful as cross-references.
+   - `##` headings should match the original's `---`-underlined section headings 1:1. Existing chapters had sections split that the original keeps merged (e.g. a standalone "Using the BVH" subsection that the original embeds in "The Box Comparison Functions").
+5. **Word-by-word prose comparison** against the original Markdeep page (`https://raytracing.github.io/books/RayTracingTheNextWeek.html`). Strip HTML tags and code blocks from both sides, then diff the prose. The original book is the source of truth for narrative; only the code listings should differ (Rust added alongside C++).
