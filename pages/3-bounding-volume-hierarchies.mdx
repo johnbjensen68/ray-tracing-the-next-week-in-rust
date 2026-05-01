@@ -1,10 +1,12 @@
 # Bounding Volume Hierarchies
 
-Ray-object intersection is the main time-bottleneck in a ray tracer, and the run time is linear with the number of objects. But it's a repeated search on the same scene, so we ought to be able to make it a logarithmic search in the spirit of binary search. Because we are sending millions to billions of rays on the same scene, we can sort the objects and then each ray intersection can be a sublinear search. The two most common families of sorting are 1) to subdivide space and 2) to subdivide the list of objects. The latter is usually much easier to code up, and just as fast to run for most models.
+This part is by far the most difficult and involved part of the ray tracer we are working on. I am sticking it in this chapter so the code can run faster, and because it refactors `hittable` a little, and when I add rectangles and boxes we won't have to go back and refactor them.
+
+Ray-object intersection is the main time-bottleneck in a ray tracer, and the run time is linear with the number of objects. But it's a repeated search on the same scene, so we ought to be able to make it a logarithmic search in the spirit of binary search. Because we are sending millions to billions of rays into the same scene, we can sort the objects in the scene, and then each ray intersection can be a sublinear search. The two most common methods of sorting are to 1) subdivide the space, and 2) subdivide the objects. The latter is usually much easier to code up, and just as fast to run for most models.
 
 ## The Key Idea
 
-The key idea of creating bounding volumes for a set of primitives is to find a volume that fully encloses (bounds) all the objects. For example, suppose you computed a bounding sphere of 10 objects. Any ray that misses the bounding sphere definitely misses all ten objects inside. If the ray hits the bounding sphere, then it might hit one of the ten objects. So the bounding code is always of the form:
+The key idea of creating bounding volumes for a set of primitives is to find a volume that fully encloses (bounds) all the objects. For example, suppose you computed a sphere that bounds 10 objects. Any ray that misses the bounding sphere definitely misses all ten objects inside. If the ray hits the bounding sphere, then it might hit one of the ten objects. So the bounding code is always of the form:
 
 ```
 if (ray hits bounding object)
@@ -13,11 +15,15 @@ else
     return false
 ```
 
-A key thing is that we are *not* dividing the screen or the volume space. We are dividing the list of objects. Each object is in exactly one bounding volume, but bounding volumes can overlap.
+Note that we will use these bounding volumes to group the objects in the scene into subgroups. We are *not* dividing the screen or the scene space. We want any given object to be in just one bounding volume, though bounding volumes can overlap.
 
 ## Hierarchies of Bounding Volumes
 
 To make things sub-linear we need to make the bounding volumes hierarchical. For example, if we divided a set of objects into two groups, red and blue, and used rectangular bounding volumes, we'd have:
+
+<Fig src="fig-2.01-bvol-hierarchy.jpg" caption="Bounding volume hierarchy" />
+
+Note that the blue and red bounding volumes are contained in the purple one, but they might overlap, and they are not ordered -- they are just both inside. So the tree shown on the right has no concept of ordering in the left and right children; they are simply inside. The code would be:
 
 ```
 if (hits purple)
@@ -28,15 +34,89 @@ if (hits purple)
 return false
 ```
 
-The BVH forms a tree. The root is the bounding box for the whole scene. Each internal node is the bounding box of its children. Leaf nodes hold one or a few primitives. This turns a linear scan through every object into a traversal of a binary tree — typically logarithmic in the number of objects.
-
 ## Axis-Aligned Bounding Boxes (AABBs)
 
-To get good performance we need a good division into subsets, and to traverse the BVH quickly we need intersection tests that are very fast. We use axis-aligned bounding rectangular parallelepipeds (axis-aligned bounding boxes, or AABBs) for this. All you need to know is that testing a ray against an AABB is fast, and that AABBs work well in practice.
+To get that all to work we need a way to make good divisions, rather than bad ones, and a way to intersect a ray with a bounding volume. A ray bounding volume intersection needs to be fast, and bounding volumes need to be pretty compact. In practice for most models, axis-aligned boxes work better than the alternatives (such as the spherical bounds mentioned above), but this design choice is always something to keep in mind if you encounter other types of bounding models.
 
-The slab method is based on the observation that an n-dimensional AABB is just the intersection of n axis-aligned intervals, often called "slabs". An interval is just the points between two endpoints, e.g., $x$ such that $3 \le x \le 5$. In 2D, two intervals stacked make a 2D AABB (a rectangle). In 3D, three intervals make an AABB.
+From now on we will call axis-aligned bounding rectangular parallelepipeds (really, that is what they need to be called if we're being precise) *axis-aligned bounding boxes*, or AABBs. (In the code, you will also come across the naming abbreviation "bbox" for "bounding box".) Any method you want to use to intersect a ray with an AABB is fine. And all we need to know is whether or not we hit it; we don't need hit points or normals or any of the stuff we need to display the object.
 
-We also add an `expand` helper to `Interval` for padding a bounding box by a small delta — useful for handling numerical precision when rays graze box boundaries.
+Most people use the "slab" method. This is based on the observation that an n-dimensional AABB is just the intersection of $n$ axis-aligned intervals, often called "slabs". Recall that an interval is just the points within two endpoints, for example, $x$ such that $3 \leq x \leq 5$, or more succinctly $x$ in $[3,5]$. In 2D, an AABB (a rectangle) is defined by the overlap of two intervals:
+
+<Fig src="fig-2.02-2d-aabb.jpg" caption="2D axis-aligned bounding box" />
+
+To determine if a ray hits one interval, we first need to figure out whether the ray hits the boundaries. For example, in 1D, ray intersection with two planes will yield the ray parameters $t_0$ and $t_1$. (If the ray is parallel to the planes, its intersection with any plane will be undefined.)
+
+<Fig src="fig-2.03-ray-slab.jpg" caption="Ray-slab intersection" />
+
+How do we find the intersection between a ray and a plane? Recall that the ray is just defined by a function that—given a parameter $t$—returns a location $\mathbf{P}(t)$:
+
+$$ \mathbf{P}(t) = \mathbf{Q} + t \mathbf{d} $$
+
+This equation applies to all three of the x/y/z coordinates. For example, $x(t) = Q_x + t d_x$. This ray hits the plane $x = x_0$ at the parameter $t$ that satisfies this equation:
+
+$$ x_0 = Q_x + t_0 d_x $$
+
+So $t$ at the intersection is given by
+
+$$ t_0 = \frac{x_0 - Q_x}{d_x} $$
+
+We get the similar expression for $x_1$:
+
+$$ t_1 = \frac{x_1 - Q_x}{d_x} $$
+
+The key observation to turn that 1D math into a 2D or 3D hit test is this: if a ray intersects the box bounded by all pairs of planes, then all $t$-intervals will overlap. For example, in 2D the green and blue overlapping only happens if the ray intersects the bounded box:
+
+<Fig src="fig-2.04-ray-slab-interval.jpg" caption="Ray-slab $t$-interval overlap" />
+
+In this figure, the upper ray intervals do not overlap, so we know the ray does *not* hit the 2D box bounded by the green and blue planes. The lower ray intervals *do* overlap, so we know the lower ray *does* hit the bounded box.
+
+## Ray Intersection with an AABB
+
+The following pseudocode determines whether the $t$ intervals in the slab overlap:
+
+```
+interval_x ← compute_intersection_x (ray, x0, x1)
+interval_y ← compute_intersection_y (ray, y0, y1)
+return overlaps(interval_x, interval_y)
+```
+
+That is awesomely simple, and the fact that the 3D version trivially extends the above is why people love the slab method:
+
+```
+interval_x ← compute_intersection_x (ray, x0, x1)
+interval_y ← compute_intersection_y (ray, y0, y1)
+interval_z ← compute_intersection_z (ray, z0, z1)
+return overlaps(interval_x, interval_y, interval_z)
+```
+
+There are some caveats that make this less pretty than it first appears. Consider again the 1D equations for $t_0$ and $t_1$:
+
+$$ t_0 = \frac{x_0 - Q_x}{d_x} $$
+
+$$ t_1 = \frac{x_1 - Q_x}{d_x} $$
+
+First, suppose the ray is traveling in the negative $\mathbf{x}$ direction. The interval $(t_{x0}, t_{x1})$ as computed above might be reversed, like $(7, 3)$ for example. Second, the denominator $d_x$ could be zero, yielding infinite values. And if the ray origin lies on one of the slab boundaries, we can get a `NaN`, since both the numerator and the denominator can be zero. Also, the zero will have a ± sign when using IEEE floating point.
+
+The good news for $d_x = 0$ is that $t_{x0}$ and $t_{x1}$ will be equal: both +∞ or -∞, if not between $x_0$ and $x_1$. So, using min and max should get us the right answers:
+
+$$ t_{x0} = \min(\frac{x_0 - Q_x}{d_x}, \frac{x_1 - Q_x}{d_x}) $$
+
+$$ t_{x1} = \max(\frac{x_0 - Q_x}{d_x}, \frac{x_1 - Q_x}{d_x}) $$
+
+The remaining troublesome case if we do that is if $d_x = 0$ and either $x_0 - Q_x = 0$ or $x_1 - Q_x = 0$ so we get a `NaN`. In that case we can arbitrarily interpret that as either hit or no hit, but we'll revisit that later.
+
+Now, let's look at the pseudo-function `overlaps`. Suppose we can assume the intervals are not reversed, and we want to return true when the intervals overlap. The boolean `overlaps()` function computes the overlap of the $t$ intervals `t_interval1` and `t_interval2`, and uses that to determine if that overlap is non-empty:
+
+```
+bool overlaps(t_interval1, t_interval2)
+    t_min ← max(t_interval1.min, t_interval2.min)
+    t_max ← min(t_interval1.max, t_interval2.max)
+    return t_min < t_max
+```
+
+If there are any `NaN`s running around there, the compare will return false, so we need to be sure our bounding boxes have a little padding if we care about grazing cases (and we probably *should* because in a ray tracer all cases come up eventually).
+
+To accomplish this, we'll first add a new `interval` function `expand`, which pads an interval by a given amount:
 
 <Tabs>
   <Tab label="Rust">
@@ -62,9 +142,11 @@ We also add an `expand` helper to `Interval` for padding a bounding box by a sma
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 7: interval::expand() method</div>
 
+Now we have everything we need to implement the new AABB class.
+
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="aabb.rs | AABB definition"
+    ```rust filename="aabb.rs | Axis-aligned bounding box class"
     #[derive(Clone, Copy)]
     pub struct Aabb {
         pub x: Interval,
@@ -78,18 +160,12 @@ We also add an `expand` helper to `Interval` for padding a bounding box by a sma
         }
 
         pub fn from_points(a: Point3, b: Point3) -> Self {
+            // Treat the two points a and b as extrema for the bounding box, so we don't
+            // require a particular minimum/maximum coordinate order.
             Self {
                 x: if a.x() <= b.x() { Interval::new(a.x(), b.x()) } else { Interval::new(b.x(), a.x()) },
                 y: if a.y() <= b.y() { Interval::new(a.y(), b.y()) } else { Interval::new(b.y(), a.y()) },
                 z: if a.z() <= b.z() { Interval::new(a.z(), b.z()) } else { Interval::new(b.z(), a.z()) },
-            }
-        }
-
-        pub fn from_aabbs(box0: Aabb, box1: Aabb) -> Self {
-            Self {
-                x: Interval::from_intervals(box0.x, box1.x),
-                y: Interval::from_intervals(box0.y, box1.y),
-                z: Interval::from_intervals(box0.z, box1.z),
             }
         }
 
@@ -100,53 +176,7 @@ We also add an `expand` helper to `Interval` for padding a bounding box by a sma
                 _ => self.z,
             }
         }
-    }
-    ```
-  </Tab>
 
-  <Tab label="C++">
-    ```cpp filename="aabb.h | AABB class"
-    class aabb {
-      public:
-        interval x, y, z;
-
-        aabb() {}
-
-        aabb(const interval& x, const interval& y, const interval& z)
-          : x(x), y(y), z(z) {}
-
-        aabb(const point3& a, const point3& b) {
-            x = (a[0] <= b[0]) ? interval(a[0], b[0]) : interval(b[0], a[0]);
-            y = (a[1] <= b[1]) ? interval(a[1], b[1]) : interval(b[1], a[1]);
-            z = (a[2] <= b[2]) ? interval(a[2], b[2]) : interval(b[2], a[2]);
-        }
-
-        aabb(const aabb& box0, const aabb& box1) {
-            x = interval(box0.x, box1.x);
-            y = interval(box0.y, box1.y);
-            z = interval(box0.z, box1.z);
-        }
-
-        const interval& axis_interval(int n) const {
-            if (n == 1) return y;
-            if (n == 2) return z;
-            return x;
-        }
-    };
-    ```
-  </Tab>
-</Tabs>
-
-<div className="text-center text-sm italic mt-1 mb-4">Listing 8: Axis-aligned bounding box class</div>
-
-## Ray Intersection with an AABB
-
-The slab method tests a ray against an AABB by intersecting it with three pairs of planes (one per axis) and checking if the resulting intervals overlap. If they all overlap, the ray hits the box.
-
-<Tabs>
-  <Tab label="Rust">
-    ```rust filename="aabb.rs | Ray-AABB intersection"
-    impl Aabb {
         pub fn hit(&self, r: &Ray, mut ray_t: Interval) -> bool {
             for axis in 0..3 {
                 let ax = self.axis_interval(axis);
@@ -171,33 +201,70 @@ The slab method tests a ray against an AABB by intersecting it with three pairs 
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="aabb.h | hit function"
-    bool hit(const ray& r, interval ray_t) const {
-        for (int axis = 0; axis < 3; axis++) {
-            const interval& ax = axis_interval(axis);
-            const double adinv = 1.0 / r.direction()[axis];
-            auto t0 = (ax.min - r.origin()[axis]) * adinv;
-            auto t1 = (ax.max - r.origin()[axis]) * adinv;
-            if (t0 < t1) {
-                if (t0 > ray_t.min) ray_t.min = t0;
-                if (t1 < ray_t.max) ray_t.max = t1;
-            } else {
-                if (t1 > ray_t.min) ray_t.min = t1;
-                if (t0 < ray_t.max) ray_t.max = t0;
-            }
-            if (ray_t.max <= ray_t.min) return false;
+    ```cpp filename="aabb.h | Axis-aligned bounding box class"
+    #ifndef AABB_H
+    #define AABB_H
+
+    class aabb {
+      public:
+        interval x, y, z;
+
+        aabb() {} // The default AABB is empty, since intervals are empty by default.
+
+        aabb(const interval& x, const interval& y, const interval& z)
+          : x(x), y(y), z(z) {}
+
+        aabb(const point3& a, const point3& b) {
+            // Treat the two points a and b as extrema for the bounding box, so we don't require a
+            // particular minimum/maximum coordinate order.
+
+            x = (a[0] <= b[0]) ? interval(a[0], b[0]) : interval(b[0], a[0]);
+            y = (a[1] <= b[1]) ? interval(a[1], b[1]) : interval(b[1], a[1]);
+            z = (a[2] <= b[2]) ? interval(a[2], b[2]) : interval(b[2], a[2]);
         }
-        return true;
-    }
+
+        const interval& axis_interval(int n) const {
+            if (n == 1) return y;
+            if (n == 2) return z;
+            return x;
+        }
+
+        bool hit(const ray& r, interval ray_t) const {
+            const point3& ray_orig = r.origin();
+            const vec3&   ray_dir  = r.direction();
+
+            for (int axis = 0; axis < 3; axis++) {
+                const interval& ax = axis_interval(axis);
+                const double adinv = 1.0 / ray_dir[axis];
+
+                auto t0 = (ax.min - ray_orig[axis]) * adinv;
+                auto t1 = (ax.max - ray_orig[axis]) * adinv;
+
+                if (t0 < t1) {
+                    if (t0 > ray_t.min) ray_t.min = t0;
+                    if (t1 < ray_t.max) ray_t.max = t1;
+                } else {
+                    if (t1 > ray_t.min) ray_t.min = t1;
+                    if (t0 < ray_t.max) ray_t.max = t0;
+                }
+
+                if (ray_t.max <= ray_t.min)
+                    return false;
+            }
+            return true;
+        }
+    };
+
+    #endif
     ```
   </Tab>
 </Tabs>
 
-<div className="text-center text-sm italic mt-1 mb-4">Listing 8: Axis-aligned bounding box class (hit function)</div>
+<div className="text-center text-sm italic mt-1 mb-4">Listing 8: Axis-aligned bounding box class</div>
 
 ## Constructing Bounding Boxes for Hittables
 
-Every hittable object needs a method to return its AABB. We add `bounding_box` to the `Hittable` trait.
+Every primitive needs to be able to report its bounding box, so the BVH can group them into a hierarchy of boxes. We add a `bounding_box` method to the `Hittable` trait. Default-constructed intervals (and therefore default-constructed AABBs) are empty by design, so an empty `hittable_list` gives back an empty box and the math still works out. Animated objects should return bounds that cover their entire range of motion from time=0 to time=1.
 
 <Tabs>
   <Tab label="Rust">
@@ -276,34 +343,7 @@ For a stationary sphere, the bounding box is straightforward: center ± radius o
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 10: Sphere with bounding box</div>
 
-For a moving sphere we need a box that encloses the entire trajectory. We compute boxes at `t=0` and `t=1` and take their union. The union of two AABBs requires a helper on both `Interval` and `Aabb`:
-
-<Tabs>
-  <Tab label="Rust">
-    ```rust filename="interval.rs | Interval from two intervals"
-    impl Interval {
-        pub fn from_intervals(a: Interval, b: Interval) -> Self {
-            Self {
-                min: a.min.min(b.min),
-                max: a.max.max(b.max),
-            }
-        }
-    }
-    ```
-  </Tab>
-
-  <Tab label="C++">
-    ```cpp filename="interval.h | Interval from two intervals"
-    interval(const interval& a, const interval& b) {
-        // Create the interval tightly enclosing the two input intervals.
-        min = a.min <= b.min ? a.min : b.min;
-        max = a.max >= b.max ? a.max : b.max;
-    }
-    ```
-  </Tab>
-</Tabs>
-
-<div className="text-center text-sm italic mt-1 mb-4">Listing 12: Interval constructor from two intervals</div>
+For a moving sphere, we want the bounds of its entire range of motion. To do this, we can take the box of the sphere at time=0, and the box of the sphere at time=1, and compute the box around those two boxes.
 
 <Tabs>
   <Tab label="Rust">
@@ -347,6 +387,66 @@ For a moving sphere we need a box that encloses the entire trajectory. We comput
 </Tabs>
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 11: Moving sphere with bounding box</div>
+
+This needs an `aabb` constructor that takes two boxes as input. We'll first add a new interval constructor that does the same thing for intervals:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="interval.rs | Interval from two intervals"
+    impl Interval {
+        pub fn from_intervals(a: Interval, b: Interval) -> Self {
+            // Create the interval tightly enclosing the two input intervals.
+            Self {
+                min: a.min.min(b.min),
+                max: a.max.max(b.max),
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="interval.h | Interval from two intervals"
+    interval(const interval& a, const interval& b) {
+        // Create the interval tightly enclosing the two input intervals.
+        min = a.min <= b.min ? a.min : b.min;
+        max = a.max >= b.max ? a.max : b.max;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 12: Interval constructor from two intervals</div>
+
+Then use it to construct an AABB from two input boxes:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="aabb.rs | AABB constructor from two AABB inputs"
+    impl Aabb {
+        pub fn from_aabbs(box0: Aabb, box1: Aabb) -> Self {
+            Self {
+                x: Interval::from_intervals(box0.x, box1.x),
+                y: Interval::from_intervals(box0.y, box1.y),
+                z: Interval::from_intervals(box0.z, box1.z),
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="aabb.h | AABB constructor from two AABB inputs"
+    aabb(const aabb& box0, const aabb& box1) {
+        x = interval(box0.x, box1.x);
+        y = interval(box0.y, box1.y);
+        z = interval(box0.z, box1.z);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 13: AABB constructor from two AABB inputs</div>
 
 ## Creating Bounding Boxes of Lists of Objects
 
@@ -460,34 +560,17 @@ The BVH node is itself a `Hittable`. It stores two children (also `Hittable`s, w
 
 ## Splitting BVH Volumes
 
-To build the tree we recursively split the list of objects. The simplest strategy: pick a random axis, sort the primitives along it, and split the sorted list in half. The recursion bottoms out at one or two objects.
+The trickiest part of any spatial efficiency structure is building it, and the BVH is no exception — that work happens in the constructor. The hit function will work as long as we divide each node's objects into two sub-lists; tighter divisions just make traversal faster, not more correct. We'll go with a simple recipe at each node:
 
-We also need a small utility to generate random integers:
+1. randomly choose an axis
+2. sort the primitives (using `std::sort`)
+3. put half in each subtree
 
-<Tabs>
-  <Tab label="Rust">
-    ```rust filename="rtweekend.rs | random_int"
-    pub fn random_int(min: i32, max: i32) -> i32 {
-        random_double_range(min as f64, (max + 1) as f64) as i32
-    }
-    ```
-  </Tab>
-
-  <Tab label="C++">
-    ```cpp filename="rtweekend.h | A function to return random integers in a range"
-    inline int random_int(int min, int max) {
-        // Returns a random integer in [min,max].
-        return int(random_double(min, max+1));
-    }
-    ```
-  </Tab>
-</Tabs>
-
-<div className="text-center text-sm italic mt-1 mb-4">Listing 17: A function to return random integers in a range</div>
+When only two elements remain we put one in each subtree and stop the recursion. To keep traversal branchless of null checks, a span of one is duplicated into both subtrees. Three-element spans could be specialized for a small win, but we'll let the optimizer handle the small stuff. The constructor below uses three comparators — `box_x_compare`, `box_y_compare`, and `box_z_compare` — which we'll define in the next section.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="bvh.rs | BvhNode::new"
+    ```rust filename="bvh.rs | BvhNode constructor"
     impl BvhNode {
         pub fn new(objects: &mut Vec<Arc<dyn Hittable>>, start: usize, end: usize) -> Self {
             let axis = random_int(0, 2) as usize;
@@ -547,23 +630,47 @@ We also need a small utility to generate random integers:
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 16: Bounding volume hierarchy node</div>
 
-## The Box Comparison Functions
-
-The comparators sort hittables by the minimum of their bounding box interval along a given axis.
+This pulls in a new helper, `random_int()`:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="bvh.rs | Box comparison functions"
-    fn box_compare(a: &dyn Hittable, b: &dyn Hittable, axis: usize) -> Ordering {
-        let a_interval = a.bounding_box().axis_interval(axis);
-        let b_interval = b.bounding_box().axis_interval(axis);
-        a_interval.min.partial_cmp(&b_interval.min).unwrap_or(Ordering::Equal)
+    ```rust filename="rtweekend.rs | A function to return random integers in a range"
+    pub fn random_int(min: i32, max: i32) -> i32 {
+        // Returns a random integer in [min,max].
+        random_double_range(min as f64, (max + 1) as f64) as i32
     }
     ```
   </Tab>
 
   <Tab label="C++">
-    ```cpp filename="bvh.h | BVH comparison functions"
+    ```cpp filename="rtweekend.h | A function to return random integers in a range"
+    inline int random_int(int min, int max) {
+        // Returns a random integer in [min,max].
+        return int(random_double(min, max+1));
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 17: A function to return random integers in a range</div>
+
+## The Box Comparison Functions
+
+The constructor's `std::sort` call needs comparators. We define a generic comparator parameterized by axis, and three axis-specific wrappers around it that pin the axis index:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="bvh.rs | BVH comparison function"
+    fn box_compare(a: &dyn Hittable, b: &dyn Hittable, axis: usize) -> Ordering {
+        let a_axis_interval = a.bounding_box().axis_interval(axis);
+        let b_axis_interval = b.bounding_box().axis_interval(axis);
+        a_axis_interval.min.partial_cmp(&b_axis_interval.min).unwrap_or(Ordering::Equal)
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="bvh.h | BVH comparison function, X-axis"
     class bvh_node : public hittable {
       // ...
       private:
@@ -593,9 +700,7 @@ The comparators sort hittables by the minimum of their bounding box interval alo
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 18: BVH comparison function, X-axis</div>
 
-## Using the BVH
-
-Wrapping the world in a BVH node is a one-line change. The BVH will restructure the list into a tree; all subsequent ray queries traverse the tree instead of scanning every object.
+With that in place we can wrap the random-spheres world in a `bvh_node`. All subsequent ray queries traverse the tree instead of scanning every object.
 
 <Tabs>
   <Tab label="Rust">
@@ -613,70 +718,20 @@ Wrapping the world in a BVH node is a one-line change. The BVH will restructure 
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 19: Random spheres, using BVH</div>
 
+The rendered image is identical to the non-BVH version, but the render itself runs much faster — the original book reports almost a 6.5× speedup over the non-BVH version.
+
 ## Another BVH Optimization
 
-Rather than choosing a random axis for each split, we can do better by always splitting along the *longest* axis of the bounding box covering the current object span. This tends to produce more balanced trees.
+We can squeeze out a bit more speed. Instead of picking a random splitting axis at each node, we can pick the *longest* axis of the enclosing bounding box — that tends to produce more balanced subdivisions. The change is small, but along the way we'll add a couple of pieces to `aabb`: an `empty` sentinel that we can build up from, and a `longest_axis()` helper.
 
-First we add `longest_axis()` to `Aabb`, along with `empty` and `universe` sentinel values:
-
-<Tabs>
-  <Tab label="Rust">
-    ```rust filename="aabb.rs | longest_axis and sentinel constants"
-    impl Aabb {
-        pub fn longest_axis(&self) -> usize {
-            if self.x.size() > self.y.size() {
-                if self.x.size() > self.z.size() { 0 } else { 2 }
-            } else {
-                if self.y.size() > self.z.size() { 1 } else { 2 }
-            }
-        }
-
-        pub const EMPTY: Aabb = Aabb {
-            x: Interval::EMPTY,
-            y: Interval::EMPTY,
-            z: Interval::EMPTY,
-        };
-
-        pub const UNIVERSE: Aabb = Aabb {
-            x: Interval::UNIVERSE,
-            y: Interval::UNIVERSE,
-            z: Interval::UNIVERSE,
-        };
-    }
-    ```
-  </Tab>
-
-  <Tab label="C++">
-    ```cpp filename="aabb.h | New aabb constants and longest_axis() function"
-    class aabb {
-      public:
-        // ...
-
-        int longest_axis() const {
-            if (x.size() > y.size())
-                return x.size() > z.size() ? 0 : 2;
-            else
-                return y.size() > z.size() ? 1 : 2;
-        }
-
-        static const aabb empty, universe;
-    };
-
-    const aabb aabb::empty    = aabb(interval::empty,    interval::empty,    interval::empty);
-    const aabb aabb::universe = aabb(interval::universe, interval::universe, interval::universe);
-    ```
-  </Tab>
-</Tabs>
-
-<div className="text-center text-sm italic mt-1 mb-4">Listing 21: New aabb constants and longest_axis() function</div>
-
-Now we update the BVH constructor: compute the bounding box for the entire span upfront, pick the longest axis, then sort and split as before.
+First, change the constructor: build the span's bounding box up front by initializing it to `aabb::empty` and folding in each child's box, then split along that box's longest axis. The old line that computed `bbox` from the left/right children is no longer needed.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="bvh.rs | BvhNode::new with longest axis"
+    ```rust filename="bvh.rs | BvhNode constructor using longest axis"
     impl BvhNode {
         pub fn new(objects: &mut Vec<Arc<dyn Hittable>>, start: usize, end: usize) -> Self {
+            // Build the bounding box of the span of source objects.
             let mut bbox = Aabb::EMPTY;
             for i in start..end {
                 bbox = Aabb::from_aabbs(bbox, objects[i].bounding_box());
@@ -710,6 +765,7 @@ Now we update the BVH constructor: compute the bounding box for the entire span 
   <Tab label="C++">
     ```cpp filename="bvh.h | bvh_node constructor using longest axis"
     bvh_node(std::vector<shared_ptr<hittable>>& objects, size_t start, size_t end) {
+        // Build the bounding box of the span of source objects.
         bbox = aabb::empty;
         for (size_t object_index = start; object_index < end; object_index++)
             bbox = aabb(bbox, objects[object_index]->bounding_box());
@@ -739,3 +795,61 @@ Now we update the BVH constructor: compute the bounding box for the entire span 
 </Tabs>
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 20: Building the bbox for the span of BVH objects</div>
+
+Now to add the empty/universe `aabb` constants and the `longest_axis()` function it relies on:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust filename="aabb.rs | New aabb constants and longest_axis() function"
+    impl Aabb {
+        pub fn longest_axis(&self) -> usize {
+            // Returns the index of the longest axis of the bounding box.
+            if self.x.size() > self.y.size() {
+                if self.x.size() > self.z.size() { 0 } else { 2 }
+            } else {
+                if self.y.size() > self.z.size() { 1 } else { 2 }
+            }
+        }
+
+        pub const EMPTY: Aabb = Aabb {
+            x: Interval::EMPTY,
+            y: Interval::EMPTY,
+            z: Interval::EMPTY,
+        };
+
+        pub const UNIVERSE: Aabb = Aabb {
+            x: Interval::UNIVERSE,
+            y: Interval::UNIVERSE,
+            z: Interval::UNIVERSE,
+        };
+    }
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    ```cpp filename="aabb.h | New aabb constants and longest_axis() function"
+    class aabb {
+      public:
+        // ...
+
+        int longest_axis() const {
+            // Returns the index of the longest axis of the bounding box.
+
+            if (x.size() > y.size())
+                return x.size() > z.size() ? 0 : 2;
+            else
+                return y.size() > z.size() ? 1 : 2;
+        }
+
+        static const aabb empty, universe;
+    };
+
+    const aabb aabb::empty    = aabb(interval::empty,    interval::empty,    interval::empty);
+    const aabb aabb::universe = aabb(interval::universe, interval::universe, interval::universe);
+    ```
+  </Tab>
+</Tabs>
+
+<div className="text-center text-sm italic mt-1 mb-4">Listing 21: New aabb constants and longest_axis() function</div>
+
+The output is again identical to the non-BVH render, but a little faster — the original book reports about 18% on top of the random-axis BVH.
