@@ -40,7 +40,7 @@ To get that all to work we need a way to make good divisions, rather than bad on
 
 From now on we will call axis-aligned bounding rectangular parallelepipeds (really, that is what they need to be called if we're being precise) *axis-aligned bounding boxes*, or AABBs. (In the code, you will also come across the naming abbreviation "bbox" for "bounding box".) Any method you want to use to intersect a ray with an AABB is fine. And all we need to know is whether or not we hit it; we don't need hit points or normals or any of the stuff we need to display the object.
 
-Most people use the "slab" method. This is based on the observation that an n-dimensional AABB is just the intersection of $n$ axis-aligned intervals, often called "slabs". Recall that an interval is just the points within two endpoints, for example, $x$ such that $3 \leq x \leq 5$, or more succinctly $x$ in $[3,5]$. In 2D, an AABB (a rectangle) is defined by the overlap of two intervals:
+Most people use the "slab" method. This is based on the observation that an n-dimensional AABB is just the intersection of $n$ axis-aligned intervals, often called "slabs". Recall that an interval is just the points within two endpoints, for example, $x$ such that $3 \leq x \leq 5$, or more succinctly $x$ in $[3,5]$. In 2D, an AABB (a rectangle) is defined by the overlap two intervals:
 
 <Fig src="fig-2.02-2d-aabb.jpg" caption="2D axis-aligned bounding box" />
 
@@ -264,7 +264,11 @@ Now we have everything we need to implement the new AABB class.
 
 ## Constructing Bounding Boxes for Hittables
 
-Every primitive needs to be able to report its bounding box, so the BVH can group them into a hierarchy of boxes. We add a `bounding_box` method to the `Hittable` trait. Default-constructed intervals (and therefore default-constructed AABBs) are empty by design, so an empty `hittable_list` gives back an empty box and the math still works out. Animated objects should return bounds that cover their entire range of motion from time=0 to time=1.
+We now need to add a function to compute the bounding boxes of all the hittables. Then we will make a hierarchy of boxes over all the primitives, and the individual primitives—like spheres—will live at the leaves.
+
+Recall that `interval` values constructed without arguments will be empty by default. Since an `aabb` object has an interval for each of its three dimensions, each of these will then be empty by default, and therefore `aabb` objects will be empty by default. Thus, some objects may have empty bounding volumes. For example, consider a `hittable_list` object with no children. Happily, the way we've designed our interval class, the math all works out.
+
+Finally, recall that some objects may be animated. Such objects should return their bounds over the entire range of motion, from time=0 to time=1.
 
 <Tabs>
   <Tab label="Rust">
@@ -290,7 +294,7 @@ Every primitive needs to be able to report its bounding box, so the BVH can grou
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 9: Hittable class with bounding box</div>
 
-For a stationary sphere, the bounding box is straightforward: center ± radius on each axis.
+For a stationary sphere, the `bounding_box` function is easy:
 
 <Tabs>
   <Tab label="Rust">
@@ -388,7 +392,7 @@ For a moving sphere, we want the bounds of its entire range of motion. To do thi
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 11: Moving sphere with bounding box</div>
 
-This needs an `aabb` constructor that takes two boxes as input. We'll first add a new interval constructor that does the same thing for intervals:
+Now we need a new `aabb` constructor that takes two boxes as input. First, we'll add a new interval constructor to do this:
 
 <Tabs>
   <Tab label="Rust">
@@ -418,7 +422,7 @@ This needs an `aabb` constructor that takes two boxes as input. We'll first add 
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 12: Interval constructor from two intervals</div>
 
-Then use it to construct an AABB from two input boxes:
+Now we can use this to construct an axis-aligned bounding box from two input boxes.
 
 <Tabs>
   <Tab label="Rust">
@@ -450,7 +454,7 @@ Then use it to construct an AABB from two input boxes:
 
 ## Creating Bounding Boxes of Lists of Objects
 
-A `HittableList`'s bounding box is the union of the bounding boxes of all its children, accumulated as objects are added.
+Now we'll update the `hittable_list` object, computing the bounds of its children. We'll update the bounding box incrementally as each new child is added.
 
 <Tabs>
   <Tab label="Rust">
@@ -500,7 +504,9 @@ A `HittableList`'s bounding box is the union of the bounding boxes of all its ch
 
 ## The BVH Node Class
 
-The BVH node is itself a `Hittable`. It stores two children (also `Hittable`s, which may be primitives or other BVH nodes) and their combined AABB. Traversal checks the box first; only if the box is hit do we recurse into children.
+A BVH is also going to be a `hittable` — just like lists of `hittable`s. It's really a container, but it can respond to the query "does this ray hit you?". One design question is whether we have two classes, one for the tree, and one for the nodes in the tree; or do we have just one class and have the root just be a node we point to. The `hit` function is pretty straightforward: check whether the box for the node is hit, and if so, check the children and sort out any details.
+
+I am a fan of the one class design when feasible. Here is such a class:
 
 <Tabs>
   <Tab label="Rust">
@@ -560,7 +566,7 @@ The BVH node is itself a `Hittable`. It stores two children (also `Hittable`s, w
 
 ## Splitting BVH Volumes
 
-The trickiest part of any spatial efficiency structure is building it, and the BVH is no exception — that work happens in the constructor. The hit function will work as long as we divide each node's objects into two sub-lists; tighter divisions just make traversal faster, not more correct. We'll go with a simple recipe at each node:
+The most complicated part of any efficiency structure, including the BVH, is building it. We do this in the constructor. A cool thing about BVHs is that as long as the list of objects in a `bvh_node` gets divided into two sub-lists, the hit function will work. It will work best if the division is done well, so that the two children have smaller bounding boxes than their parent's bounding box, but that is for speed not correctness. I'll choose the middle ground, and at each node split the list along one axis. I'll go for simplicity:
 
 1. randomly choose an axis
 2. sort the primitives (using `std::sort`)
@@ -852,4 +858,4 @@ Now to add the empty/universe `aabb` constants and the `longest_axis()` function
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 21: New aabb constants and longest_axis() function</div>
 
-The output is again identical to the non-BVH render, but a little faster — the original book reports about 18% on top of the random-axis BVH.
+As before, you should see identical results to image 1, but rendering a little bit faster. On my system, this yields something like an additional 18% render speedup. Not bad for a little extra work.
