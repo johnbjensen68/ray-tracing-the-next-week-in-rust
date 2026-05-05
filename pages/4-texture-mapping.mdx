@@ -1,10 +1,16 @@
 # Texture Mapping
 
-Texture mapping in computer graphics is the process of applying a material effect to an object in the scene. The "texture" part is the effect, and the "mapping" part is the mathematical mapping from one space to another. The effect can be any property that we're trying to visualize: color, shininess, bump geometry (bump mapping), or even material presence (to create cut-out surfaces). The most common type of texture maps an image onto a surface to define the color at each point. In practice we implement this in reverse: given a point on the surface, the texture lookup returns the color.
+*Texture mapping* in computer graphics is the process of applying a material effect to an object in the scene. The "texture" part is the effect, and the "mapping" part is in the mathematical sense of mapping one space onto another. This effect could be any material property: color, shininess, bump geometry (called *Bump Mapping*), or even material existence (to create cut-out regions of the surface).
+
+The most common type of texture mapping maps an image onto the surface of an object, defining the color at each point on the object's surface. In practice, we implement the process in reverse: given some point on the object, we'll look up the color defined by the texture map.
+
+To begin with, we'll make the texture colors procedural, and will create a texture map of constant color. Most programs keep constant RGB colors and textures in different classes, so feel free to do something different, but I am a big believer in this architecture because it's great being able to make any color a texture.
+
+In order to perform the texture lookup, we need a *texture coordinate*. This coordinate can be defined in many ways, and we'll develop this idea as we progress. For now, we'll pass in two dimensional texture coordinates. By convention, texture coordinates are named $u$ and $v$. For a constant texture, every $(u,v)$ pair yields a constant color, so we can actually ignore the coordinates completely. However, other texture types will need these coordinates, so we keep these in the method interface.
+
+The primary method of our texture classes is the `color value(...)` method, which returns the texture color given the input coordinates. In addition to taking the point's texture coordinates $u$ and $v$, we also provide the position of the point in question, for reasons that will become apparent later.
 
 ## Constant Color Texture
-
-We start with a `Texture` trait so that any function mapping from a surface point to a color can be used as a texture. The simplest texture is a constant color — but we also add a convenience constructor that takes raw RGB values so callers don't always need to construct a `Color` first.
 
 <Tabs>
   <Tab label="Rust">
@@ -68,7 +74,7 @@ We start with a `Texture` trait so that any function mapping from a surface poin
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 22: A texture class</div>
 
-The `hit_record` structure needs to carry $u,v$ surface coordinates at each ray-object intersection so textures can look up their value there.
+We'll need to update the `hit_record` structure to store the $u,v$ surface coordinates of the ray-object hit point.
 
 <Tabs>
   <Tab label="Rust">
@@ -104,9 +110,17 @@ The `hit_record` structure needs to carry $u,v$ surface coordinates at each ray-
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 23: Adding u,v coordinates to the hit_record</div>
 
+In the future, we'll need to compute $(u,v)$ texture coordinates for a given point on each type of `hittable`. More on that later.
+
 ## Solid Textures: A Checker Texture
 
-A checker texture alternates between two textures based on the sign of a trig function applied to the 3D point coordinates. Because the function depends on the 3D position, it tiles through space — it's a solid (or spatial) texture. The `value()` function ignores `u` and `v`, using only `p`. We also add a convenience constructor that accepts raw colors so callers don't need to wrap them in `SolidColor` manually.
+A solid (or spatial) texture depends only on the position of each point in 3D space. You can think of a solid texture as if it's coloring all of the points in space itself, instead of coloring a given object in that space. For this reason, the object can move through the colors of the texture as it changes position, though usually you would to fix the relationship between the object and the solid texture.
+
+To explore spatial textures, we'll implement a spatial `checker_texture` class, which implements a three-dimensional checker pattern. Since a spatial texture function is driven by a given position in space, the texture `value()` function ignores the `u` and `v` parameters, and uses only the `p` parameter.
+
+To accomplish the checkered pattern, we'll first compute the floor of each component of the input point. We could truncate the coordinates, but that would pull values toward zero, which would give us the same color on both sides of zero. The floor function will always shift values to the integer value on the left (toward negative infinity). Given these three integer results ($\lfloor x \rfloor, \lfloor y \rfloor, \lfloor z \rfloor$) we take their sum and compute the result modulo two, which gives us either 0 or 1. Zero maps to the even color, and one to the odd color.
+
+Finally, we add a scaling factor to the texture, to allow us to control the size of the checker pattern in the scene.
 
 <Tabs>
   <Tab label="Rust">
@@ -176,7 +190,9 @@ A checker texture alternates between two textures based on the sign of a trig fu
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 24: Checkered texture</div>
 
-Now we update `Lambertian` to hold a texture instead of a raw color, calling `tex.value(rec.u, rec.v, rec.p)` at scatter time.
+Those checker odd/even parameters can point to a constant texture or to some other procedural texture. This is in the spirit of shader networks introduced by Pat Hanrahan back in the 1980s.
+
+To support procedural textures, we'll extend the `lambertian` class to work with textures instead of colors:
 
 <Tabs>
   <Tab label="Rust">
@@ -238,7 +254,7 @@ Now we update `Lambertian` to hold a texture instead of a raw color, calling `te
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 25: Lambertian material with texture</div>
 
-Here is the checker applied to the ground plane in the bouncing-spheres scene:
+If we add this to our main scene:
 
 <Tabs>
   <Tab label="Rust">
@@ -278,11 +294,15 @@ Here is the checker applied to the ground plane in the bouncing-spheres scene:
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 26: Checkered texture in use</div>
 
+we get:
+
 <Img src="img-2.02-checker-ground.png" caption="Spheres on checkered ground" />
 
 ## Rendering The Solid Checker Texture
 
-To manage multiple scenes we refactor `main()` into named scene functions and dispatch with a switch.
+We're going to add a second scene to our program, and will add more scenes after that as we progress through this book. To help with this, we'll set up a switch statement to select the desired scene for a given run. It's a crude approach, but we're trying to keep things dead simple and focus on the raytracing. You may want to use a different approach in your own raytracer, such as supporting command-line arguments.
+
+Here's what our main.cc looks like after refactoring for our single random spheres scene. Rename `main()` to `bouncing_spheres()`, and add a new `main()` function to call it:
 
 <Tabs>
   <Tab label="Rust">
@@ -311,7 +331,7 @@ To manage multiple scenes we refactor `main()` into named scene functions and di
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 27: Main dispatching to selected scene</div>
 
-Here is a scene with two large spheres using the checker texture. The checker pattern tiles through all 3D space, so both spheres show the same tiling wherever their surfaces cut through it.
+Now add a scene with two checkered spheres, one atop the other.
 
 <Tabs>
   <Tab label="Rust">
@@ -378,19 +398,49 @@ Here is a scene with two large spheres using the checker texture. The checker pa
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 28: Two checkered spheres</div>
 
+We get this result:
+
 <Img src="img-2.03-checker-spheres.png" caption="Checkered spheres" />
+
+You may think the result looks a bit odd. Since `checker_texture` is a spatial texture, we're really looking at the surface of the sphere cutting through the three-dimensional checker space. There are many situations where this is perfect, or at least sufficient. In many other situations, we really want to get a consistent effect on the surface of our objects. That approach is covered next.
 
 ## Texture Coordinates for Spheres
 
-Constant textures ignore coordinates; spatial textures use 3D position. Now we focus on proper $u,v$ texture coordinates — a 2D parameterization of the surface needed for image textures.
+Constant-color textures use no coordinates. Solid (or spatial) textures use the coordinates of a point in space. Now it's time to make use of the $u,v$ texture coordinates. These coordinates specify the location on 2D source image (or in some 2D parameterized space). To get this, we need a way to find the $u,v$ coordinates of any point on the surface of a 3D object. This mapping is completely arbitrary, but generally you'd like to cover the entire surface, and be able to scale, orient and stretch the 2D image in a way that makes some sense. We'll start with deriving a scheme to get the $u,v$ coordinates of a sphere.
 
-For a sphere we use spherical coordinates. Let $\theta$ be the angle up from the bottom pole (i.e., from $-Y$) and $\phi$ be the angle around the $Y$ axis (from $-X$ toward $+Z$). We normalize to $[0,1]$:
+For spheres, texture coordinates are usually based on some form of longitude and latitude, *i.e.*, spherical coordinates. So we compute $(\theta,\phi)$ in spherical coordinates, where $\theta$ is the angle up from the bottom pole (that is, up from -Y), and $\phi$ is the angle around the Y-axis (from -X to +Z to +X to -Z back to -X).
 
-$$u = \frac{\phi}{2\pi}, \quad v = \frac{\theta}{\pi}$$
+We want to map $\theta$ and $\phi$ to texture coordinates $u$ and $v$ each in $[0,1]$, where $(u=0,v=0)$ maps to the bottom-left corner of the texture. Thus the normalization from $(\theta,\phi)$ to $(u,v)$ would be:
 
-For a unit sphere centered at the origin these angles are computed as:
+$$ u = \frac{\phi}{2\pi} $$
 
-$$\phi = \operatorname{atan2}(-z,\, x) + \pi, \quad \theta = \arccos(-y)$$
+$$ v = \frac{\theta}{\pi} $$
+
+To compute $\theta$ and $\phi$ for a given point on the unit sphere centered at the origin, we start with the equations for the corresponding Cartesian coordinates:
+
+$$ y = -\cos(\theta) $$
+
+$$ x = -\cos(\phi) \sin(\theta) $$
+
+$$ z = \sin(\phi) \sin(\theta) $$
+
+We need to invert these equations to solve for $\theta$ and $\phi$. Because of the lovely `<cmath>` function `std::atan2()`, which takes any pair of numbers proportional to sine and cosine and returns the angle, we can pass in $x$ and $z$ (the $\sin(\theta)$ cancel) to solve for $\phi$:
+
+$$ \phi = \operatorname{atan2}(z, -x) $$
+
+`std::atan2()` returns values in the range $-\pi$ to $\pi$, but they go from 0 to $\pi$, then flip to $-\pi$ and proceed back to zero. While this is mathematically correct, we want $u$ to range from $0$ to $1$, not from $0$ to $1/2$ and then from $-1/2$ to $0$. Fortunately,
+
+$$ \operatorname{atan2}(a,b) = \operatorname{atan2}(-a,-b) + \pi, $$
+
+and the second formulation yields values from $0$ continuously to $2\pi$. Thus, we can compute $\phi$ as
+
+$$ \phi = \operatorname{atan2}(-z, x) + \pi $$
+
+The derivation for $\theta$ is more straightforward:
+
+$$ \theta = \arccos(-y) $$
+
+So for a sphere, the $(u,v)$ coord computation is accomplished by a utility function that takes points on the unit sphere centered at the origin, and computes $u$ and $v$:
 
 <Tabs>
   <Tab label="Rust">
@@ -425,7 +475,7 @@ $$\phi = \operatorname{atan2}(-z,\, x) + \pi, \quad \theta = \arccos(-y)$$
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 29: get_sphere_uv function</div>
 
-We call `get_sphere_uv` inside the sphere's `hit()` method and store the results in `rec.u` and `rec.v`.
+Update the `sphere::hit()` function to use this function to update the hit record UV coordinates.
 
 <Tabs>
   <Tab label="Rust">
@@ -463,9 +513,25 @@ We call `get_sphere_uv` inside the sphere's `hit()` method and store the results
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 30: Sphere UV coordinates from hit</div>
 
+From the hitpoint $\mathbf{P}$, we compute the surface coordinates $(u,v)$. We then use these to index into our procedural solid texture (like marble). We can also read in an image and use the 2D $(u,v)$ texture coordinate to index into the image.
+
+A direct way to use scaled $(u,v)$ in an image is to round the $u$ and $v$ to integers, and use that as $(i,j)$ pixels. This is awkward, because we don't want to have to change the code when we change image resolution. So instead, one of the the most universal unofficial standards in graphics is to use texture coordinates instead of image pixel coordinates. These are just some form of fractional position in the image. For example, for pixel $(i,j)$ in an $N_x$ by $N_y$ image, the image texture position is:
+
+$$ u = \frac{i}{N_x-1} $$
+
+$$ v = \frac{j}{N_y-1} $$
+
+This is just a fractional position.
+
 ## Accessing Texture Image Data
 
-For image textures we load an image file and sample it at $u,v$ coordinates. We clamp out-of-range values and flip $v$ since image row 0 is at the top but $v=0$ is at the bottom. A solid cyan return guards against missing image files.
+Now it's time to create a texture class that holds an image. I am going to use my favorite image utility, [stb_image](https://github.com/nothings/stb). It reads image data into an array of 32-bit floating-point values. These are just packed RGBs with each component in the range [0,1] (black to full white). In addition, images are loaded in linear color space (gamma = 1) -- the color space in which we do all our computations.
+
+To help make loading our image files even easier, we provide a helper class to manage all this: `rtw_image`. It provides a helper function -- `pixel_data(int x, int y)` -- to get the 8-bit RGB byte values for each pixel. The following listing assumes that you have copied the `stb_image.h` header into a folder called `external`. Adjust according to your directory structure.
+
+If you are writing your implementation in a language other than C or C++, you'll need to locate (or write) an image loading library that provides similar functionality.
+
+The `image_texture` class uses the `rtw_image` class:
 
 <Tabs>
   <Tab label="Rust">
@@ -534,7 +600,11 @@ For image textures we load an image file and sample it at $u,v$ coordinates. We 
 
 ## Rendering The Image Texture
 
-By mapping an earth image onto a sphere using our UV coordinates, we can render a globe.
+I just grabbed a random earth map from the web -- any standard projection will do for our purposes.
+
+<Img src="earthmap.jpg" caption="earthmap.jpg" />
+
+Here's the code to read an image from a file and then assign it to a diffuse material:
 
 <Tabs>
   <Tab label="Rust">
@@ -603,5 +673,9 @@ By mapping an earth image onto a sphere using our UV coordinates, we can render 
 </Tabs>
 
 <div className="text-center text-sm italic mt-1 mb-4">Listing 33: Rendering with a texture map of Earth</div>
+
+We start to see some of the power of all colors being textures -- we can assign any kind of texture to the lambertian material, and lambertian doesn't need to be aware of it.
+
+If the photo comes back with a large cyan sphere in the middle, then `stb_image` failed to find your Earth map photo. The program will look for the file in the same directory as the executable. Make sure to copy the Earth into your build directory, or rewrite `earth()` to point somewhere else.
 
 <Img src="img-2.05-earth-sphere.png" caption="Earth-mapped sphere" />
