@@ -4,6 +4,37 @@ This part is by far the most difficult and involved part of the ray tracer we ar
 
 Ray-object intersection is the main time-bottleneck in a ray tracer, and the run time is linear with the number of objects. But it's a repeated search on the same scene, so we ought to be able to make it a logarithmic search in the spirit of binary search. Because we are sending millions to billions of rays into the same scene, we can sort the objects in the scene, and then each ray intersection can be a sublinear search. The two most common methods of sorting are to 1) subdivide the space, and 2) subdivide the objects. The latter is usually much easier to code up, and just as fast to run for most models.
 
+A quick Rust-only aside before we begin. Since this port was written, the underlying C++ book has been revised to lean on a few additions to its `interval` class — an `expand()` method, a constructor that tightly encloses two input intervals, and an `empty` sentinel. The C++ tabs in the listings below introduce these changes at the points the original book first uses them, but on the Rust side we'll add them all up front so the rest of the chapter compiles cleanly:
+
+<Tabs>
+  <Tab label="Rust">
+    ```rust {4-7,9-15,18} filename="interval.rs | Rust interval additions for chapter 3"
+    impl Interval {
+        // ...
+
+        fn expand(&self, delta: f64) -> Interval {
+            let padding = delta / 2.0;
+            return Interval::new(self.min - padding, self.max + padding);
+        }
+
+        pub fn from_intervals(a: Interval, b: Interval) -> Self {
+            // Create the interval tightly enclosing the two input intervals.
+            Self {
+                min: a.min.min(b.min),
+                max: a.max.max(b.max),
+            }
+        }
+    }
+
+    pub const EMPTY: Interval = Interval::new(f64::INFINITY, f64::NEG_INFINITY);
+    ```
+  </Tab>
+
+  <Tab label="C++">
+    *Introduced in C++ at the points listed below; this Rust prelude exists only to keep the chapter's other listings compiling.*
+  </Tab>
+</Tabs>
+
 ## The Key Idea
 
 The key idea of creating bounding volumes for a set of primitives is to find a volume that fully encloses (bounds) all the objects. For example, suppose you computed a sphere that bounds 10 objects. Any ray that misses the bounding sphere definitely misses all ten objects inside. If the ray hits the bounding sphere, then it might hit one of the ten objects. So the bounding code is always of the form:
@@ -120,14 +151,7 @@ To accomplish this, we'll first add a new `interval` function `expand`, which pa
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="interval.rs | interval::expand() method"
-    impl Interval {
-        pub fn expand(&self, delta: f64) -> Self {
-            let padding = delta / 2.0;
-            Self::new(self.min - padding, self.max + padding)
-        }
-    }
-    ```
+    *Already added in the Rust prelude at the top of this chapter.*
   </Tab>
 
   <Tab label="C++">
@@ -147,7 +171,7 @@ Now we have everything we need to implement the new AABB class.
 <Tabs>
   <Tab label="Rust">
     ```rust filename="aabb.rs | Axis-aligned bounding box class"
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub struct Aabb {
         pub x: Interval,
         pub y: Interval,
@@ -155,7 +179,7 @@ Now we have everything we need to implement the new AABB class.
     }
 
     impl Aabb {
-        pub fn new(x: Interval, y: Interval, z: Interval) -> Self {
+        pub const fn new(x: Interval, y: Interval, z: Interval) -> Self {
             Self { x, y, z }
         }
 
@@ -180,9 +204,9 @@ Now we have everything we need to implement the new AABB class.
         pub fn hit(&self, r: &Ray, mut ray_t: Interval) -> bool {
             for axis in 0..3 {
                 let ax = self.axis_interval(axis);
-                let adinv = 1.0 / r.direction()[axis];
-                let t0 = (ax.min - r.origin()[axis]) * adinv;
-                let t1 = (ax.max - r.origin()[axis]) * adinv;
+                let adinv = 1.0 / r.direction().get_index(axis);
+                let t0 = (ax.min - r.origin().get_index(axis)) * adinv;
+                let t1 = (ax.max - r.origin().get_index(axis)) * adinv;
                 if t0 < t1 {
                     if t0 > ray_t.min { ray_t.min = t0; }
                     if t1 < ray_t.max { ray_t.max = t1; }
@@ -272,9 +296,9 @@ Finally, recall that some objects may be animated. Such objects should return th
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="hittable.rs | bounding_box in Hittable trait"
-    pub trait Hittable: Send + Sync {
-        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool;
+    ```rust {3} filename="hittable.rs | bounding_box in Hittable trait"
+    pub trait Hittable {
+        fn hit(&self, ray: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord>;
         fn bounding_box(&self) -> Aabb;
     }
     ```
@@ -298,16 +322,23 @@ For a stationary sphere, the `bounding_box` function is easy:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="sphere.rs | Stationary sphere with bounding box"
+    ```rust {5,10,11,16,22-24} filename="sphere.rs | Stationary sphere with bounding box"
+    pub struct Sphere {
+        center: Ray,
+        radius: f64,
+        mat: Rc<dyn Material>,
+        bbox: Aabb,
+    }
+
     impl Sphere {
-        pub fn new_stationary(center: Point3, radius: f64, mat: Arc<dyn Material>) -> Self {
-            let rvec = Vec3::new(radius, radius, radius);
-            let bbox = Aabb::from_points(center - rvec, center + rvec);
-            Self {
-                center: Ray::new(center, Vec3::zero(), 0.0),
-                radius: radius.max(0.0),
-                mat,
-                bbox,
+        pub fn new(cen: Point3, r: f64, m: Rc<dyn Material>) -> Sphere {
+            let rvec = Vec3::new(r, r, r);
+            let bbox = Aabb::from_points(cen - rvec, cen + rvec);
+            Sphere {
+                center: Ray::new(cen, Vec3::new(0.0, 0.0, 0.0), 0.0),
+                radius: r,
+                mat: m,
+                bbox: bbox,
             }
         }
     }
@@ -351,23 +382,18 @@ For a moving sphere, we want the bounds of its entire range of motion. To do thi
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="sphere.rs | Moving sphere with bounding box"
+    ```rust {3-6,11} filename="sphere.rs | Moving sphere with bounding box"
     impl Sphere {
-        pub fn new_moving(
-            center1: Point3,
-            center2: Point3,
-            radius: f64,
-            mat: Arc<dyn Material>,
-        ) -> Self {
-            let rvec = Vec3::new(radius, radius, radius);
-            let box1 = Aabb::from_points(center1 - rvec, center1 + rvec);
-            let box2 = Aabb::from_points(center2 - rvec, center2 + rvec);
+        pub fn new_moving(cen1: Point3, cen2: Point3, r: f64, m: Rc<dyn Material>) -> Sphere {
+            let rvec = Vec3::new(r, r, r);
+            let box1 = Aabb::from_points(cen1 - rvec, cen1 + rvec);
+            let box2 = Aabb::from_points(cen2 - rvec, cen2 + rvec);
             let bbox = Aabb::from_aabbs(box1, box2);
-            Self {
-                center: Ray::new(center1, center2 - center1, 0.0),
-                radius: radius.max(0.0),
-                mat,
-                bbox,
+            Sphere {
+                center: Ray::new(cen1, cen2 - cen1, 0.0),
+                radius: r,
+                mat: m,
+                bbox: bbox,
             }
         }
     }
@@ -396,17 +422,7 @@ Now we need a new `aabb` constructor that takes two boxes as input. First, we'll
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="interval.rs | Interval from two intervals"
-    impl Interval {
-        pub fn from_intervals(a: Interval, b: Interval) -> Self {
-            // Create the interval tightly enclosing the two input intervals.
-            Self {
-                min: a.min.min(b.min),
-                max: a.max.max(b.max),
-            }
-        }
-    }
-    ```
+    *Already added in the Rust prelude at the top of this chapter.*
   </Tab>
 
   <Tab label="C++">
@@ -458,16 +474,17 @@ Now we'll update the `hittable_list` object, computing the bounds of its childre
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="hittable_list.rs | HittableList with bounding box"
+    ```rust {3,4,9,10,15-17} filename="hittable_list.rs | HittableList with bounding box"
+    #[derive(Default)]
     pub struct HittableList {
-        pub objects: Vec<Arc<dyn Hittable>>,
+        pub objects: Vec<Rc<dyn Hittable>>,
         bbox: Aabb,
     }
 
     impl HittableList {
-        pub fn add(&mut self, object: Arc<dyn Hittable>) {
+        pub fn add(&mut self, object: Box<dyn Hittable>) {
             self.bbox = Aabb::from_aabbs(self.bbox, object.bounding_box());
-            self.objects.push(object);
+            self.objects.push(Rc::from(object));
         }
     }
 
@@ -512,23 +529,24 @@ I am a fan of the one class design when feasible. Here is such a class:
   <Tab label="Rust">
     ```rust filename="bvh.rs | BvhNode"
     pub struct BvhNode {
-        left: Arc<dyn Hittable>,
-        right: Arc<dyn Hittable>,
+        left: Rc<dyn Hittable>,
+        right: Rc<dyn Hittable>,
         bbox: Aabb,
     }
 
     impl Hittable for BvhNode {
-        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+        fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
+            let ray_t = Interval::new(t_min, t_max);
             if !self.bbox.hit(r, ray_t) {
-                return false;
+                return None;
             }
-            let hit_left = self.left.hit(r, ray_t, rec);
+            let hit_left = self.left.hit(r, t_min, t_max);
             let hit_right = self.right.hit(
                 r,
-                Interval::new(ray_t.min, if hit_left { rec.t } else { ray_t.max }),
-                rec,
+                t_min,
+                hit_left.as_ref().map(|x| x.t).unwrap_or(t_max),
             );
-            hit_left || hit_right
+            hit_right.or(hit_left)
         }
 
         fn bounding_box(&self) -> Aabb {
@@ -578,10 +596,15 @@ When only two elements remain we put one in each subtree and stop the recursion.
   <Tab label="Rust">
     ```rust filename="bvh.rs | BvhNode constructor"
     impl BvhNode {
-        pub fn new(objects: &mut Vec<Arc<dyn Hittable>>, start: usize, end: usize) -> Self {
-            let axis = random_int(0, 2) as usize;
+        pub fn new(mut hl: HittableList) -> Self {
+            let l = hl.objects.len();
+            BvhNode::internal_new(&mut hl.objects, 0, l)
+        }
+
+        pub fn internal_new(objects: &mut Vec<Rc<dyn Hittable>>, start: usize, end: usize) -> Self {
+            let axis = common::random_int(0, 2) as usize;
             let object_span = end - start;
-            let (left, right): (Arc<dyn Hittable>, Arc<dyn Hittable>) = if object_span == 1 {
+            let (left, right): (Rc<dyn Hittable>, Rc<dyn Hittable>) = if object_span == 1 {
                 (objects[start].clone(), objects[start].clone())
             } else if object_span == 2 {
                 let (a, b) = (objects[start].clone(), objects[start + 1].clone());
@@ -594,8 +617,8 @@ When only two elements remain we put one in each subtree and stop the recursion.
                 objects[start..end].sort_by(|a, b| box_compare(&**a, &**b, axis));
                 let mid = start + object_span / 2;
                 (
-                    Arc::new(BvhNode::new(objects, start, mid)),
-                    Arc::new(BvhNode::new(objects, mid, end)),
+                    Rc::new(BvhNode::internal_new(objects, start, mid)),
+                    Rc::new(BvhNode::internal_new(objects, mid, end)),
                 )
             };
             let bbox = Aabb::from_aabbs(left.bounding_box(), right.bounding_box());
@@ -640,7 +663,7 @@ This pulls in a new helper, `random_int()`:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="rtweekend.rs | A function to return random integers in a range"
+    ```rust filename="common.rs | A function to return random integers in a range"
     pub fn random_int(min: i32, max: i32) -> i32 {
         // Returns a random integer in [min,max].
         random_double_range(min as f64, (max + 1) as f64) as i32
@@ -710,8 +733,8 @@ With that in place we can wrap the random-spheres world in a `bvh_node`. All sub
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Random spheres, using BVH"
-    let world = HittableList::new(Arc::new(BvhNode::from_list(world)));
+    ```rust {1} filename="main.rs | Random spheres, using BVH"
+    let world = BvhNode::new(random_scene());
     ```
   </Tab>
 
@@ -734,18 +757,18 @@ First, change the constructor: build the span's bounding box up front by initial
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="bvh.rs | BvhNode constructor using longest axis"
+    ```rust {3-7,9} filename="bvh.rs | BvhNode constructor using longest axis"
     impl BvhNode {
-        pub fn new(objects: &mut Vec<Arc<dyn Hittable>>, start: usize, end: usize) -> Self {
+        pub fn internal_new(objects: &mut Vec<Rc<dyn Hittable>>, start: usize, end: usize) -> Self {
             // Build the bounding box of the span of source objects.
-            let mut bbox = Aabb::EMPTY;
+            let mut bbox = crate::aabb::EMPTY;
             for i in start..end {
                 bbox = Aabb::from_aabbs(bbox, objects[i].bounding_box());
             }
 
             let axis = bbox.longest_axis();
             let object_span = end - start;
-            let (left, right): (Arc<dyn Hittable>, Arc<dyn Hittable>) = if object_span == 1 {
+            let (left, right): (Rc<dyn Hittable>, Rc<dyn Hittable>) = if object_span == 1 {
                 (objects[start].clone(), objects[start].clone())
             } else if object_span == 2 {
                 let (a, b) = (objects[start].clone(), objects[start + 1].clone());
@@ -758,10 +781,11 @@ First, change the constructor: build the span's bounding box up front by initial
                 objects[start..end].sort_by(|a, b| box_compare(&**a, &**b, axis));
                 let mid = start + object_span / 2;
                 (
-                    Arc::new(BvhNode::new(objects, start, mid)),
-                    Arc::new(BvhNode::new(objects, mid, end)),
+                    Rc::new(BvhNode::internal_new(objects, start, mid)),
+                    Rc::new(BvhNode::internal_new(objects, mid, end)),
                 )
             };
+            let bbox = Aabb::from_aabbs(left.bounding_box(), right.bounding_box());
             Self { left, right, bbox }
         }
     }
@@ -806,8 +830,10 @@ Now to add the empty/universe `aabb` constants and the `longest_axis()` function
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="aabb.rs | New aabb constants and longest_axis() function"
+    ```rust {4-11,14} filename="aabb.rs | New aabb constants and longest_axis() function"
     impl Aabb {
+        // ...
+
         pub fn longest_axis(&self) -> usize {
             // Returns the index of the longest axis of the bounding box.
             if self.x.size() > self.y.size() {
@@ -816,19 +842,9 @@ Now to add the empty/universe `aabb` constants and the `longest_axis()` function
                 if self.y.size() > self.z.size() { 1 } else { 2 }
             }
         }
-
-        pub const EMPTY: Aabb = Aabb {
-            x: Interval::EMPTY,
-            y: Interval::EMPTY,
-            z: Interval::EMPTY,
-        };
-
-        pub const UNIVERSE: Aabb = Aabb {
-            x: Interval::UNIVERSE,
-            y: Interval::UNIVERSE,
-            z: Interval::UNIVERSE,
-        };
     }
+
+    pub const EMPTY: Aabb = Aabb::new(interval::EMPTY, interval::EMPTY, interval::EMPTY);
     ```
   </Tab>
 
