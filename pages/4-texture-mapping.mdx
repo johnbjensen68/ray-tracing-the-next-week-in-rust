@@ -525,11 +525,14 @@ This is just a fractional position.
 
 ## Accessing Texture Image Data
 
-Now it's time to create a texture class that holds an image. I am going to use my favorite image utility, [stb_image](https://github.com/nothings/stb). It reads image data into an array of 32-bit floating-point values. These are just packed RGBs with each component in the range [0,1] (black to full white). In addition, images are loaded in linear color space (gamma = 1) -- the color space in which we do all our computations.
+Now it's time to create a texture class that holds an image. We are going to use the [`image`](https://crates.io/crates/image) crate, which decodes a wide variety of image formats into an `RgbImage` we can index pixel-by-pixel. Add it to your `Cargo.toml`:
 
-To help make loading our image files even easier, we provide a helper class to manage all this: `rtw_image`. It provides a helper function -- `pixel_data(int x, int y)` -- to get the 8-bit RGB byte values for each pixel. The following listing assumes that you have copied the `stb_image.h` header into a folder called `external`. Adjust according to your directory structure.
+```toml filename="Cargo.toml"
+[dependencies]
+image = "0.25"
+```
 
-If you are writing your implementation in a language other than C or C++, you'll need to locate (or write) an image loading library that provides similar functionality.
+Images are loaded in linear color space (gamma = 1) -- the color space in which we do all our computations.
 
 The `image_texture` class uses the `rtw_image` class:
 
