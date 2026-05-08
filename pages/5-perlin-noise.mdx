@@ -154,7 +154,7 @@ We can use that texture on some spheres:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Scene with two Perlin-textured spheres"
+    ```rust {34,38} filename="main.rs | Scene with two Perlin-textured spheres"
     fn perlin_spheres() {
         let mut world = HittableList::new();
 
@@ -361,7 +361,7 @@ It is also a bit low frequency. We can scale the input point to make it vary mor
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="texture.rs | NoiseTexture with scale"
+    ```rust {3,7-8,14} filename="texture.rs | NoiseTexture with scale"
     pub struct NoiseTexture {
         noise: Perlin,
         scale: f64,
@@ -405,7 +405,7 @@ We then add that scale to the `perlin_spheres()` scene description:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Perlin-textured spheres with a scale to the noise"
+    ```rust {4} filename="main.rs | Perlin-textured spheres with a scale to the noise"
     fn perlin_spheres() {
         let mut world = HittableList::new();
 
@@ -607,7 +607,7 @@ The output of the Perlin interpolation function can return negative values. Thes
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="texture.rs | NoiseTexture with range remapping"
+    ```rust {3} filename="texture.rs | NoiseTexture with range remapping"
     impl Texture for NoiseTexture {
         fn value(&self, _u: f64, _v: f64, p: &Point3) -> Color {
             Color::new(1.0, 1.0, 1.0) * 0.5 * (1.0 + self.noise.noise(&(self.scale * *p)))
@@ -673,7 +673,7 @@ Very often, a composite noise that has multiple summed frequencies is used. This
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="texture.rs | NoiseTexture using turbulence"
+    ```rust {3} filename="texture.rs | NoiseTexture using turbulence"
     impl Texture for NoiseTexture {
         fn value(&self, _u: f64, _v: f64, p: &Point3) -> Color {
             Color::new(1.0, 1.0, 1.0) * self.noise.turbulence(p, 7)
@@ -703,7 +703,7 @@ However, usually turbulence is used indirectly. For example, the "hello world" o
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="texture.rs | Marble-like noise texture"
+    ```rust {2-3} filename="texture.rs | Marble-like noise texture"
     fn value(&self, _u: f64, _v: f64, p: &Point3) -> Color {
         let noise_val = 1.0 + (self.scale * p.z() + 10.0 * self.noise.turbulence(p, 7)).sin();
         Color::new(1.0, 1.0, 1.0) * 0.5 * noise_val
