@@ -59,6 +59,32 @@ Two patterns from the original book's Markdeep source break in MDX 2 + KaTeX and
 - `\begin{aligned}...\end{aligned}` — MDX 2 parses `{aligned}` as a JSX expression and fails with `ReferenceError: aligned is not defined` at deploy time. Replace each aligned block with separate single-line `$$...$$` equations.
 - **Multi-line `$$...$$` blocks** — even with both delimiters present, splitting the contents across lines causes KaTeX to mis-tokenize and emit `ParseError: Can't use function '$' in math mode`, which cascades into the rest of the page rendering as raw MDX source (you'll see `&lt;Tab&gt;` etc. in the HTML). Always keep `$$...$$` blocks on a single line.
 
+## Highlighting changed lines in listings
+
+Code fences support a `{lines}` annotation right after the language tag (e.g. `` ```rust {2,7-9} filename="..." ``) that visually highlights specific lines or ranges. We use this to mark the lines that differ from the prior chapter's state, so readers can see at a glance what changed.
+
+Convention:
+- Highlight only truly new or modified lines, not the surrounding unchanged context.
+- Skip highlights when a listing introduces wholly new code (a new file, new function, or new struct) — the prose already frames it as new and a fully highlighted block reads the same as an unhighlighted one.
+- For listings that mix new and existing code (e.g. adding fields to an existing struct, or replacing one expression inside an unchanged function body), highlight only the diff. Line numbers count from the first line inside the fence.
+- The C++ tab in a `<Tabs>` pair generally doesn't need its own highlights — the Rust tab carries the diff and the C++ tab is the static reference.
+
+Example — chapter 4 Listing 23 adds `u, v` to an existing `HitRecord`, so only those two lines are highlighted:
+
+````
+```rust {6-7} filename="hittable.rs | Adding u,v coordinates to HitRecord"
+pub struct HitRecord {
+    pub p: Point3,
+    pub normal: Vec3,
+    pub mat: Rc<dyn Material>,
+    pub t: f64,
+    pub u: f64,
+    pub v: f64,
+    pub front_face: bool,
+}
+```
+````
+
 ## Validating a ported chapter
 
 The user expects each chapter to match the original book word-for-word (modulo Rust/C++ translation in code listings). Workflow:
