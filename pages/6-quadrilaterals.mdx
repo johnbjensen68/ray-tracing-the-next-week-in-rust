@@ -115,12 +115,12 @@ Now we're ready for the first sketch of the new `quad` class:
         q: Point3,
         u: Vec3,
         v: Vec3,
-        mat: Arc<dyn Material>,
+        mat: Rc<dyn Material>,
         bbox: Aabb,
     }
 
     impl Quad {
-        pub fn new(q: Point3, u: Vec3, v: Vec3, mat: Arc<dyn Material>) -> Self {
+        pub fn new(q: Point3, u: Vec3, v: Vec3, mat: Rc<dyn Material>) -> Self {
             let mut quad = Self {
                 q, u, v, mat,
                 bbox: Aabb::default(),
@@ -140,8 +140,8 @@ Now we're ready for the first sketch of the new `quad` class:
     impl Hittable for Quad {
         fn bounding_box(&self) -> Aabb { self.bbox }
 
-        fn hit(&self, _r: &Ray, _ray_t: Interval, _rec: &mut HitRecord) -> bool {
-            false // To be implemented
+        fn hit(&self, _r: &Ray, _t_min: f64, _t_max: f64) -> Option<HitRecord> {
+            None // To be implemented
         }
     }
     ```
@@ -279,17 +279,17 @@ Add the planar values to the `quad` class:
         q: Point3,
         u: Vec3,
         v: Vec3,
-        mat: Arc<dyn Material>,
+        mat: Rc<dyn Material>,
         bbox: Aabb,
         normal: Vec3,
         d: f64,
     }
 
     impl Quad {
-        pub fn new(q: Point3, u: Vec3, v: Vec3, mat: Arc<dyn Material>) -> Self {
-            let n = u.cross(v);
-            let normal = n.unit_vector();
-            let d = normal.dot(q);
+        pub fn new(q: Point3, u: Vec3, v: Vec3, mat: Rc<dyn Material>) -> Self {
+            let n = vec3::cross(u, v);
+            let normal = vec3::unit_vector(n);
+            let d = vec3::dot(normal, q);
 
             let mut quad = Self {
                 q, u, v, mat,
@@ -343,28 +343,33 @@ our quadrilateral.
   <Tab label="Rust">
     ```rust filename="quad.rs | hit() method for the infinite plane"
     impl Hittable for Quad {
-        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
-            let denom = self.normal.dot(r.direction());
+        fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
+            let ray_t = Interval::new(t_min, t_max);
+            let denom = vec3::dot(self.normal, r.direction());
 
             // No hit if the ray is parallel to the plane.
             if denom.abs() < 1e-8 {
-                return false;
+                return None;
             }
 
             // Return false if the hit point parameter t is outside the ray interval.
-            let t = (self.d - self.normal.dot(r.origin())) / denom;
+            let t = (self.d - vec3::dot(self.normal, r.origin())) / denom;
             if !ray_t.contains(t) {
-                return false;
+                return None;
             }
 
             let intersection = r.at(t);
 
-            rec.t = t;
-            rec.p = intersection;
-            rec.mat = self.mat.clone();
-            rec.set_face_normal(r, self.normal);
-
-            true
+            let rec = HitRecord {
+                t,
+                p: intersection,
+                mat: self.mat.clone(),
+                normal: self.normal,
+                front_face: Default::default(),
+                u: 0.0,
+                v: 0.0,
+            };
+            Some(rec)
         }
     }
     ```
@@ -453,18 +458,18 @@ The vector $\mathbf{w}$ is constant for a given quadrilateral, so we'll cache th
         u: Vec3,
         v: Vec3,
         w: Vec3,
-        mat: Arc<dyn Material>,
+        mat: Rc<dyn Material>,
         bbox: Aabb,
         normal: Vec3,
         d: f64,
     }
 
     impl Quad {
-        pub fn new(q: Point3, u: Vec3, v: Vec3, mat: Arc<dyn Material>) -> Self {
-            let n = u.cross(v);
-            let normal = n.unit_vector();
-            let d = normal.dot(q);
-            let w = n / n.dot(n);
+        pub fn new(q: Point3, u: Vec3, v: Vec3, mat: Rc<dyn Material>) -> Self {
+            let n = vec3::cross(u, v);
+            let normal = vec3::unit_vector(n);
+            let d = vec3::dot(normal, q);
+            let w = n / vec3::dot(n, n);
 
             let mut quad = Self {
                 q, u, v, w, mat,
@@ -606,55 +611,56 @@ test method from the hit method.
   <Tab label="Rust">
     ```rust filename="quad.rs | Final quad class"
     impl Hittable for Quad {
-        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
-            let denom = self.normal.dot(r.direction());
+        fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
+            let ray_t = Interval::new(t_min, t_max);
+            let denom = vec3::dot(self.normal, r.direction());
 
             // No hit if the ray is parallel to the plane.
             if denom.abs() < 1e-8 {
-                return false;
+                return None;
             }
 
             // Return false if the hit point parameter t is outside the ray interval.
-            let t = (self.d - self.normal.dot(r.origin())) / denom;
+            let t = (self.d - vec3::dot(self.normal, r.origin())) / denom;
             if !ray_t.contains(t) {
-                return false;
+                return None;
             }
 
             // Determine if the hit point lies within the planar shape using its plane coordinates.
             let intersection = r.at(t);
             let planar_hitpt_vector = intersection - self.q;
-            let alpha = self.w.dot(planar_hitpt_vector.cross(self.v));
-            let beta  = self.w.dot(self.u.cross(planar_hitpt_vector));
+            let alpha = vec3::dot(self.w, vec3::cross(planar_hitpt_vector, self.v));
+            let beta  = vec3::dot(self.w, vec3::cross(self.u, planar_hitpt_vector));
 
-            if !Self::is_interior(alpha, beta, rec) {
-                return false;
-            }
+            let interior = Self::is_interior(alpha, beta)?;
 
-            // Ray hits the 2D shape; set the rest of the hit record and return true.
-            rec.t = t;
-            rec.p = intersection;
-            rec.mat = self.mat.clone();
-            rec.set_face_normal(r, self.normal);
-
-            true
+            // Ray hits the 2D shape; build the hit record and return.
+            let rec = HitRecord {
+                t,
+                p: intersection,
+                mat: self.mat.clone(),
+                normal: self.normal,
+                front_face: Default::default(),
+                u: interior.0,
+                v: interior.1,
+            };
+            Some(rec)
         }
 
         fn bounding_box(&self) -> Aabb { self.bbox }
     }
 
     impl Quad {
-        fn is_interior(a: f64, b: f64, rec: &mut HitRecord) -> bool {
+        fn is_interior(a: f64, b: f64) -> Option<(f64, f64)> {
             let unit_interval = Interval::new(0.0, 1.0);
-            // Given the hit point in plane coordinates, return false if it is outside the
-            // primitive, otherwise set the hit record UV coordinates and return true.
+            // Given the hit point in plane coordinates, return None if it is outside the
+            // primitive, otherwise return the (u, v) coordinates.
 
             if !unit_interval.contains(a) || !unit_interval.contains(b) {
-                return false;
+                return None;
             }
 
-            rec.u = a;
-            rec.v = b;
-            true
+            Some((a, b))
         }
     }
     ```
@@ -729,24 +735,40 @@ And now we add a new scene to demonstrate our new `quad` primitive:
 <Tabs>
   <Tab label="Rust">
     ```rust filename="main.rs | A new scene with quads"
-    fn quads() -> HittableList {
+    fn quads() {
         let mut world = HittableList::new();
 
         // Materials
-        let left_red     = Arc::new(Lambertian::from_color(Color::new(1.0, 0.2, 0.2)));
-        let back_green   = Arc::new(Lambertian::from_color(Color::new(0.2, 1.0, 0.2)));
-        let right_blue   = Arc::new(Lambertian::from_color(Color::new(0.2, 0.2, 1.0)));
-        let upper_orange = Arc::new(Lambertian::from_color(Color::new(1.0, 0.5, 0.0)));
-        let lower_teal   = Arc::new(Lambertian::from_color(Color::new(0.2, 0.8, 0.8)));
+        let left_red     = Rc::new(Lambertian::new(Color::new(1.0, 0.2, 0.2)));
+        let back_green   = Rc::new(Lambertian::new(Color::new(0.2, 1.0, 0.2)));
+        let right_blue   = Rc::new(Lambertian::new(Color::new(0.2, 0.2, 1.0)));
+        let upper_orange = Rc::new(Lambertian::new(Color::new(1.0, 0.5, 0.0)));
+        let lower_teal   = Rc::new(Lambertian::new(Color::new(0.2, 0.8, 0.8)));
 
         // Quads
-        world.add(Arc::new(Quad::new(Point3::new(-3.0,-2.0, 5.0), Vec3::new(0.0, 0.0,-4.0), Vec3::new(0.0, 4.0, 0.0), left_red)));
-        world.add(Arc::new(Quad::new(Point3::new(-2.0,-2.0, 0.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(0.0, 4.0, 0.0), back_green)));
-        world.add(Arc::new(Quad::new(Point3::new( 3.0,-2.0, 1.0), Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 4.0, 0.0), right_blue)));
-        world.add(Arc::new(Quad::new(Point3::new(-2.0, 3.0, 1.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 4.0), upper_orange)));
-        world.add(Arc::new(Quad::new(Point3::new(-2.0,-3.0, 5.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(0.0, 0.0,-4.0), lower_teal)));
+        world.add(Box::new(Quad::new(Point3::new(-3.0,-2.0, 5.0), Vec3::new(0.0, 0.0,-4.0), Vec3::new(0.0, 4.0, 0.0), left_red)));
+        world.add(Box::new(Quad::new(Point3::new(-2.0,-2.0, 0.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(0.0, 4.0, 0.0), back_green)));
+        world.add(Box::new(Quad::new(Point3::new( 3.0,-2.0, 1.0), Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 4.0, 0.0), right_blue)));
+        world.add(Box::new(Quad::new(Point3::new(-2.0, 3.0, 1.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 4.0), upper_orange)));
+        world.add(Box::new(Quad::new(Point3::new(-2.0,-3.0, 5.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(0.0, 0.0,-4.0), lower_teal)));
 
-        world
+        const IMAGE_WIDTH: usize = 400;
+        const SAMPLES_PER_PIXEL: i32 = 100;
+        const MAX_DEPTH: i32 = 50;
+        let cam = Camera::new(
+            IMAGE_WIDTH,
+            SAMPLES_PER_PIXEL,
+            MAX_DEPTH,
+            Point3::new(0.0, 0.0, 9.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            80.0,
+            1.0,
+            0.1,
+            10.0,
+        );
+
+        cam.render(&world);
     }
 
     fn main() {
@@ -755,23 +777,7 @@ And now we add a new scene to demonstrate our new `quad` primitive:
             2 => checkered_spheres(),
             3 => earth(),
             4 => perlin_spheres(),
-            5 => {
-                let world = quads();
-                let mut cam = Camera::default();
-                cam.aspect_ratio      = 1.0;
-                cam.image_width       = 400;
-                cam.samples_per_pixel = 100;
-                cam.max_depth         = 50;
-
-                cam.vfov              = 80.0;
-                cam.lookfrom          = Point3::new(0.0, 0.0, 9.0);
-                cam.lookat            = Point3::new(0.0, 0.0, 0.0);
-                cam.vup               = Vec3::new(0.0, 1.0, 0.0);
-
-                cam.defocus_angle     = 0.0;
-
-                cam.render(&world);
-            }
+            5 => quads(),
             _ => {}
         }
     }
