@@ -78,7 +78,7 @@ We'll need to update the `hit_record` structure to store the $u,v$ surface coord
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="hittable.rs | Adding u,v coordinates to HitRecord"
+    ```rust {6-7} filename="hittable.rs | Adding u,v coordinates to HitRecord"
     pub struct HitRecord {
         pub p: Point3,
         pub normal: Vec3,
@@ -196,7 +196,7 @@ To support procedural textures, we'll extend the `lambertian` class to work with
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="material.rs | Lambertian material with texture"
+    ```rust {2,7,10-12,25} filename="material.rs | Lambertian material with texture"
     pub struct Lambertian {
         tex: Rc<dyn Texture>,
     }
@@ -259,7 +259,7 @@ If we add this to our main scene:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Checkered texture in use"
+    ```rust {4-8,12} filename="main.rs | Checkered texture in use"
     fn random_scene() -> HittableList {
         let mut world = HittableList::new();
 
@@ -417,7 +417,7 @@ The scene functions above call `cam.render(&world)`, but our Rust port has so fa
 
 First, extend `Camera` with the image-size and sampling settings that the loop needs, and add `image_width`, `samples_per_pixel`, and `max_depth` to the constructor:
 
-```rust filename="camera.rs | Camera struct and constructor with image and sampling settings"
+```rust {2-5,17-19,31-34} filename="camera.rs | Camera struct and constructor with image and sampling settings"
 pub struct Camera {
     aspect_ratio: f64,
     image_width: usize,
@@ -626,7 +626,7 @@ Update the `sphere::hit()` function to use this function to update the hit recor
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="sphere.rs | Sphere UV coordinates from hit"
+    ```rust {9-10,14-16} filename="sphere.rs | Sphere UV coordinates from hit"
     fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
         // ... (intersection test) ...
         let mut rec = HitRecord {
@@ -764,7 +764,7 @@ Here's the code to read an image from a file and then assign it to a diffuse mat
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Rendering with a texture map of Earth"
+    ```rust {30,33} filename="main.rs | Rendering with a texture map of Earth"
     fn earth() {
         let earth_texture = Rc::new(ImageTexture::new("earthmap.jpg"));
         let earth_surface = Rc::new(Lambertian::from_texture(earth_texture));
