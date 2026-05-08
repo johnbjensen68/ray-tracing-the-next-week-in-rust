@@ -15,7 +15,7 @@ The primary method of our texture classes is the `color value(...)` method, whic
 <Tabs>
   <Tab label="Rust">
     ```rust filename="texture.rs | Texture trait and SolidColor"
-    pub trait Texture: Send + Sync {
+    pub trait Texture {
         fn value(&self, u: f64, v: f64, p: &Point3) -> Color;
     }
 
@@ -82,7 +82,7 @@ We'll need to update the `hit_record` structure to store the $u,v$ surface coord
     pub struct HitRecord {
         pub p: Point3,
         pub normal: Vec3,
-        pub mat: Arc<dyn Material>,
+        pub mat: Rc<dyn Material>,
         pub t: f64,
         pub u: f64,
         pub v: f64,
@@ -127,20 +127,20 @@ Finally, we add a scaling factor to the texture, to allow us to control the size
     ```rust filename="texture.rs | CheckerTexture"
     pub struct CheckerTexture {
         inv_scale: f64,
-        even: Arc<dyn Texture>,
-        odd: Arc<dyn Texture>,
+        even: Rc<dyn Texture>,
+        odd: Rc<dyn Texture>,
     }
 
     impl CheckerTexture {
-        pub fn new(scale: f64, even: Arc<dyn Texture>, odd: Arc<dyn Texture>) -> Self {
+        pub fn new(scale: f64, even: Rc<dyn Texture>, odd: Rc<dyn Texture>) -> Self {
             Self { inv_scale: 1.0 / scale, even, odd }
         }
 
         pub fn from_colors(scale: f64, c1: Color, c2: Color) -> Self {
             Self::new(
                 scale,
-                Arc::new(SolidColor::new(c1)),
-                Arc::new(SolidColor::new(c2)),
+                Rc::new(SolidColor::new(c1)),
+                Rc::new(SolidColor::new(c2)),
             )
         }
     }
@@ -198,31 +198,32 @@ To support procedural textures, we'll extend the `lambertian` class to work with
   <Tab label="Rust">
     ```rust filename="material.rs | Lambertian material with texture"
     pub struct Lambertian {
-        tex: Arc<dyn Texture>,
+        tex: Rc<dyn Texture>,
     }
 
     impl Lambertian {
         pub fn new(albedo: Color) -> Self {
-            Self { tex: Arc::new(SolidColor::new(albedo)) }
+            Self { tex: Rc::new(SolidColor::new(albedo)) }
         }
 
-        pub fn from_texture(tex: Arc<dyn Texture>) -> Self {
+        pub fn from_texture(tex: Rc<dyn Texture>) -> Self {
             Self { tex }
         }
     }
 
     impl Material for Lambertian {
-        fn scatter(
-            &self, r_in: &Ray, rec: &HitRecord,
-            attenuation: &mut Color, scattered: &mut Ray,
-        ) -> bool {
-            let mut scatter_direction = rec.normal + random_unit_vector();
+        fn scatter(&self, r_in: &Ray, rec: &HitRecord) -> Option<ScatterRecord> {
+            let mut scatter_direction = rec.normal + vec3::random_unit_vector();
+
+            // Catch degenerate scatter direction
             if scatter_direction.near_zero() {
                 scatter_direction = rec.normal;
             }
-            *scattered = Ray::new(rec.p, scatter_direction, r_in.time());
-            *attenuation = self.tex.value(rec.u, rec.v, &rec.p);
-            true
+
+            Some(ScatterRecord {
+                attenuation: self.tex.value(rec.u, rec.v, &rec.p),
+                scattered: Ray::new(rec.p, scatter_direction, r_in.time()),
+            })
         }
     }
     ```
@@ -259,18 +260,18 @@ If we add this to our main scene:
 <Tabs>
   <Tab label="Rust">
     ```rust filename="main.rs | Checkered texture in use"
-    fn bouncing_spheres() {
+    fn random_scene() -> HittableList {
         let mut world = HittableList::new();
 
-        let checker = Arc::new(CheckerTexture::from_colors(
+        let checker = Rc::new(CheckerTexture::from_colors(
             0.32,
             Color::new(0.2, 0.3, 0.1),
             Color::new(0.9, 0.9, 0.9),
         ));
-        world.add(Arc::new(Sphere::new_stationary(
+        world.add(Box::new(Sphere::new(
             Point3::new(0.0, -1000.0, 0.0),
             1000.0,
-            Arc::new(Lambertian::from_texture(checker)),
+            Rc::new(Lambertian::from_texture(checker)),
         )));
         // ...
     }
@@ -339,30 +340,36 @@ Now add a scene with two checkered spheres, one atop the other.
     fn checkered_spheres() {
         let mut world = HittableList::new();
 
-        let checker = Arc::new(CheckerTexture::from_colors(
+        let checker = Rc::new(CheckerTexture::from_colors(
             0.32,
             Color::new(0.2, 0.3, 0.1),
             Color::new(0.9, 0.9, 0.9),
         ));
-        world.add(Arc::new(Sphere::new_stationary(
+        world.add(Box::new(Sphere::new(
             Point3::new(0.0, -10.0, 0.0), 10.0,
-            Arc::new(Lambertian::from_texture(checker.clone())),
+            Rc::new(Lambertian::from_texture(checker.clone())),
         )));
-        world.add(Arc::new(Sphere::new_stationary(
+        world.add(Box::new(Sphere::new(
             Point3::new(0.0, 10.0, 0.0), 10.0,
-            Arc::new(Lambertian::from_texture(checker)),
+            Rc::new(Lambertian::from_texture(checker)),
         )));
 
-        let mut cam = Camera::new();
-        cam.aspect_ratio      = 16.0 / 9.0;
-        cam.image_width       = 400;
-        cam.samples_per_pixel = 100;
-        cam.max_depth         = 50;
-        cam.vfov              = 20.0;
-        cam.lookfrom          = Point3::new(13.0, 2.0, 3.0);
-        cam.lookat            = Point3::new(0.0, 0.0, 0.0);
-        cam.vup               = Vec3::new(0.0, 1.0, 0.0);
-        cam.defocus_angle     = 0.0;
+        const IMAGE_WIDTH: usize = 400;
+        const SAMPLES_PER_PIXEL: i32 = 100;
+        const MAX_DEPTH: i32 = 50;
+        let cam = Camera::new(
+            IMAGE_WIDTH,
+            SAMPLES_PER_PIXEL,
+            MAX_DEPTH,
+            Point3::new(13.0, 2.0, 3.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            20.0,
+            16.0 / 9.0,
+            0.1,
+            10.0,
+        );
+
         cam.render(&world);
     }
     ```
@@ -403,6 +410,146 @@ We get this result:
 <Img src="img-2.03-checker-spheres.png" caption="Checkered spheres" />
 
 You may think the result looks a bit odd. Since `checker_texture` is a spatial texture, we're really looking at the surface of the sphere cutting through the three-dimensional checker space. There are many situations where this is perfect, or at least sufficient. In many other situations, we really want to get a consistent effect on the surface of our objects. That approach is covered next.
+
+## Moving the Render Loop into Camera
+
+The scene functions above call `cam.render(&world)`, but our Rust port has so far kept the rendering loop and the `ray_color` helper in `main.rs`. The C++ version of this book moved them onto the `camera` class back in *Ray Tracing in One Weekend*; we're catching up now so that each scene function only has to configure a `Camera` and ask it to render.
+
+First, extend `Camera` with the image-size and sampling settings that the loop needs, and add `image_width`, `samples_per_pixel`, and `max_depth` to the constructor:
+
+```rust filename="camera.rs | Camera struct and constructor with image and sampling settings"
+pub struct Camera {
+    aspect_ratio: f64,
+    image_width: usize,
+    samples_per_pixel: i32,
+    max_depth: i32,
+    origin: Point3,
+    lower_left_corner: Point3,
+    horizontal: Vec3,
+    vertical: Vec3,
+    u: Vec3,
+    v: Vec3,
+    lens_radius: f64,
+}
+
+impl Camera {
+    pub fn new(
+        image_width: usize,
+        samples_per_pixel: i32,
+        max_depth: i32,
+        lookfrom: Point3,
+        lookat: Point3,
+        vup: Vec3,
+        vfov: f64, // Vertical field-of-view in degrees
+        aspect_ratio: f64,
+        aperture: f64,
+        focus_dist: f64,
+    ) -> Camera {
+        // ... (viewport and basis vectors as before) ...
+
+        Camera {
+            aspect_ratio,
+            image_width,
+            samples_per_pixel,
+            max_depth,
+            origin,
+            lower_left_corner,
+            horizontal,
+            vertical,
+            u,
+            v,
+            lens_radius,
+        }
+    }
+    // ...
+}
+```
+
+Move `ray_color` from `main.rs` onto `Camera` as a private method, and add a `render` method that drives the per-pixel sampling loop:
+
+```rust filename="camera.rs | ray_color and render methods on Camera"
+impl Camera {
+    // ...
+
+    fn ray_color(&self, r: &Ray, world: &dyn Hittable, depth: i32) -> Color {
+        if depth <= 0 {
+            return Color::new(0.0, 0.0, 0.0);
+        }
+
+        if let Some(hit_rec) = world.hit(r, 0.001, common::INFINITY) {
+            if let Some(scatter_rec) = hit_rec.mat.scatter(r, &hit_rec) {
+                return scatter_rec.attenuation
+                    * self.ray_color(&scatter_rec.scattered, world, depth - 1);
+            }
+            return Color::new(0.0, 0.0, 0.0);
+        }
+
+        let unit_direction = vec3::unit_vector(r.direction());
+        let t = 0.5 * (unit_direction.y() + 1.0);
+        (1.0 - t) * Color::new(1.0, 1.0, 1.0) + t * Color::new(0.5, 0.7, 1.0)
+    }
+
+    pub fn render(&self, world: &dyn Hittable) {
+        let image_height: i32 = (self.image_width as f64 / self.aspect_ratio) as i32;
+
+        print!("P3\n{} {}\n255\n", self.image_width, image_height);
+
+        for j in (0..image_height).rev() {
+            eprint!("\rScanlines remaining: {} ", j);
+            for i in 0..self.image_width {
+                let mut pixel_color = Color::new(0.0, 0.0, 0.0);
+
+                for _ in 0..self.samples_per_pixel {
+                    let u = (i as f64 + common::random_double()) / (self.image_width - 1) as f64;
+                    let v = (j as f64 + common::random_double()) / (image_height - 1) as f64;
+                    let r = self.get_ray(u, v);
+                    pixel_color += self.ray_color(&r, world, self.max_depth);
+                }
+                color::write_color(&mut io::stdout(), pixel_color, self.samples_per_pixel);
+            }
+        }
+        eprint!("\nDone.\n");
+    }
+}
+```
+
+With the loop on `Camera`, `main.rs` becomes a simple dispatcher and each scene function configures its own camera and calls `cam.render(&world)`:
+
+```rust filename="main.rs | main reduced to scene dispatch"
+fn bouncing_spheres() {
+    const ASPECT_RATIO: f64 = 3.0 / 2.0;
+    let world = BvhNode::new(random_scene());
+
+    const IMAGE_WIDTH: usize = 400;
+    const SAMPLES_PER_PIXEL: i32 = 100;
+    const MAX_DEPTH: i32 = 50;
+
+    let cam = Camera::new(
+        IMAGE_WIDTH,
+        SAMPLES_PER_PIXEL,
+        MAX_DEPTH,
+        Point3::new(13.0, 2.0, 3.0),
+        Point3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        20.0,
+        ASPECT_RATIO,
+        0.1,
+        10.0,
+    );
+
+    cam.render(&world);
+}
+
+fn main() {
+    match 2 {
+        1 => bouncing_spheres(),
+        2 => checkered_spheres(),
+        _ => {}
+    }
+}
+```
+
+The free `ray_color` function and the per-pixel loop that previously lived in `main()` are gone — every scene from here on simply hands its `Camera` and `World` to `cam.render`.
 
 ## Texture Coordinates for Spheres
 
@@ -480,17 +627,23 @@ Update the `sphere::hit()` function to use this function to update the hit recor
 <Tabs>
   <Tab label="Rust">
     ```rust filename="sphere.rs | Sphere UV coordinates from hit"
-    fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+    fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
         // ... (intersection test) ...
-        rec.t = root;
-        rec.p = r.at(rec.t);
-        let outward_normal = (rec.p - self.center.at(r.time())) / self.radius;
+        let mut rec = HitRecord {
+            t: root,
+            p: r.at(root),
+            mat: self.mat.clone(),
+            normal: Default::default(),
+            front_face: Default::default(),
+            u: 0.0,
+            v: 0.0,
+        };
+        let outward_normal = (rec.p - current_center) / self.radius;
         rec.set_face_normal(r, outward_normal);
         let (u, v) = get_sphere_uv(&outward_normal);
         rec.u = u;
         rec.v = v;
-        rec.mat = self.mat.clone();
-        true
+        Some(rec)
     }
     ```
   </Tab>
@@ -613,23 +766,31 @@ Here's the code to read an image from a file and then assign it to a diffuse mat
   <Tab label="Rust">
     ```rust filename="main.rs | Rendering with a texture map of Earth"
     fn earth() {
-        let earth_texture = Arc::new(ImageTexture::new("earthmap.jpg"));
-        let earth_surface = Arc::new(Lambertian::from_texture(earth_texture));
-        let globe = Arc::new(Sphere::new_stationary(
+        let earth_texture = Rc::new(ImageTexture::new("earthmap.jpg"));
+        let earth_surface = Rc::new(Lambertian::from_texture(earth_texture));
+        let globe = Box::new(Sphere::new(
             Point3::new(0.0, 0.0, 0.0), 2.0, earth_surface,
         ));
+        let mut world = HittableList::new();
+        world.add(globe);
 
-        let mut cam = Camera::new();
-        cam.aspect_ratio      = 16.0 / 9.0;
-        cam.image_width       = 400;
-        cam.samples_per_pixel = 100;
-        cam.max_depth         = 50;
-        cam.vfov              = 20.0;
-        cam.lookfrom          = Point3::new(0.0, 0.0, 12.0);
-        cam.lookat            = Point3::new(0.0, 0.0, 0.0);
-        cam.vup               = Vec3::new(0.0, 1.0, 0.0);
-        cam.defocus_angle     = 0.0;
-        cam.render(&HittableList::from(globe));
+        const IMAGE_WIDTH: usize = 400;
+        const SAMPLES_PER_PIXEL: i32 = 100;
+        const MAX_DEPTH: i32 = 50;
+        let cam = Camera::new(
+            IMAGE_WIDTH,
+            SAMPLES_PER_PIXEL,
+            MAX_DEPTH,
+            Point3::new(0.0, 0.0, 12.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            20.0,
+            16.0 / 9.0,
+            0.1,
+            10.0,
+        );
+
+        cam.render(&world);
     }
 
     fn main() {
