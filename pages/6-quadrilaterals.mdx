@@ -35,7 +35,7 @@ constructed AABBs always have a non-zero volume:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="aabb.rs | New Aabb::pad_to_minimums() method"
+    ```rust {2-6,14-16,19-25} filename="aabb.rs | New Aabb::pad_to_minimums() method"
     impl Aabb {
         pub fn from_intervals(x: Interval, y: Interval, z: Interval) -> Self {
             let mut a = Self { x, y, z };
@@ -274,7 +274,7 @@ Add the planar values to the `quad` class:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="quad.rs | Caching the planar values"
+    ```rust {7-8,13-15,20} filename="quad.rs | Caching the planar values"
     pub struct Quad {
         q: Point3,
         u: Vec3,
@@ -452,7 +452,7 @@ The vector $\mathbf{w}$ is constant for a given quadrilateral, so we'll cache th
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="quad.rs | Caching the quadrilateral's w value"
+    ```rust {5,17,20} filename="quad.rs | Caching the quadrilateral's w value"
     pub struct Quad {
         q: Point3,
         u: Vec3,
@@ -609,7 +609,7 @@ test method from the hit method.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="quad.rs | Final quad class"
+    ```rust {17,19-23,32-33,41-53} filename="quad.rs | Final quad class"
     impl Hittable for Quad {
         fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
             let ray_t = Interval::new(t_min, t_max);
@@ -734,7 +734,7 @@ And now we add a new scene to demonstrate our new `quad` primitive:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | A new scene with quads"
+    ```rust {38,43} filename="main.rs | A new scene with quads"
     fn quads() {
         let mut world = HittableList::new();
 
