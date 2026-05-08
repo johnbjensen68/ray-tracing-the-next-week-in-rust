@@ -158,26 +158,32 @@ We can use that texture on some spheres:
     fn perlin_spheres() {
         let mut world = HittableList::new();
 
-        let pertext = Arc::new(NoiseTexture::new(1.0));
-        world.add(Arc::new(Sphere::new_stationary(
+        let pertext = Rc::new(NoiseTexture::new());
+        world.add(Box::new(Sphere::new(
             Point3::new(0.0, -1000.0, 0.0), 1000.0,
-            Arc::new(Lambertian::from_texture(pertext.clone())),
+            Rc::new(Lambertian::from_texture(pertext.clone())),
         )));
-        world.add(Arc::new(Sphere::new_stationary(
+        world.add(Box::new(Sphere::new(
             Point3::new(0.0, 2.0, 0.0), 2.0,
-            Arc::new(Lambertian::from_texture(pertext)),
+            Rc::new(Lambertian::from_texture(pertext)),
         )));
 
-        let mut cam = Camera::new();
-        cam.aspect_ratio      = 16.0 / 9.0;
-        cam.image_width       = 400;
-        cam.samples_per_pixel = 100;
-        cam.max_depth         = 50;
-        cam.vfov              = 20.0;
-        cam.lookfrom          = Point3::new(13.0, 2.0, 3.0);
-        cam.lookat            = Point3::new(0.0, 0.0, 0.0);
-        cam.vup               = Vec3::new(0.0, 1.0, 0.0);
-        cam.defocus_angle     = 0.0;
+        const IMAGE_WIDTH: usize = 400;
+        const SAMPLES_PER_PIXEL: i32 = 100;
+        const MAX_DEPTH: i32 = 50;
+        let cam = Camera::new(
+            IMAGE_WIDTH,
+            SAMPLES_PER_PIXEL,
+            MAX_DEPTH,
+            Point3::new(13.0, 2.0, 3.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            20.0,
+            16.0 / 9.0,
+            0.1,
+            10.0,
+        );
+
         cam.render(&world);
     }
 
@@ -403,14 +409,14 @@ We then add that scale to the `perlin_spheres()` scene description:
     fn perlin_spheres() {
         let mut world = HittableList::new();
 
-        let pertext = Arc::new(NoiseTexture::new(4.0));
-        world.add(Arc::new(Sphere::new_stationary(
+        let pertext = Rc::new(NoiseTexture::new(4.0));
+        world.add(Box::new(Sphere::new(
             Point3::new(0.0, -1000.0, 0.0), 1000.0,
-            Arc::new(Lambertian::from_texture(pertext.clone())),
+            Rc::new(Lambertian::from_texture(pertext.clone())),
         )));
-        world.add(Arc::new(Sphere::new_stationary(
+        world.add(Box::new(Sphere::new(
             Point3::new(0.0, 2.0, 0.0), 2.0,
-            Arc::new(Lambertian::from_texture(pertext)),
+            Rc::new(Lambertian::from_texture(pertext)),
         )));
         // ... camera setup same as before
     }
@@ -444,6 +450,17 @@ This yields the following result:
 
 This is still a bit blocky looking, probably because the min and max of the pattern always lands exactly on the integer x/y/z. Ken Perlin's very clever trick was to instead put random unit vectors (instead of just floats) on the lattice points, and use a dot product to move the min and max off the lattice. So, first we need to change the random floats to random vectors. These vectors are any reasonable set of irregular directions, and I won't bother to make them exactly uniform:
 
+The Rust port also needs a small helper on `Vec3` to seed the lattice array. C++ can write `vec3 c[2][2][2];` and the elements default-construct to the origin, but Rust's fixed-size array initializer needs an explicit value, so we add `Vec3::zero()`:
+
+```rust filename="vec3.rs | Vec3::zero helper for array initialization"
+impl Vec3 {
+    pub fn zero() -> Vec3 {
+        Vec3 { e: [0.0, 0.0, 0.0] }
+    }
+    // ...
+}
+```
+
 <Tabs>
   <Tab label="Rust">
     ```rust filename="perlin.rs | Perlin with random unit vectors"
@@ -457,7 +474,7 @@ This is still a bit blocky looking, probably because the min and max of the patt
     impl Perlin {
         pub fn new() -> Self {
             let randvec: Vec<Vec3> = (0..POINT_COUNT)
-                .map(|_| Vec3::random_range(-1.0, 1.0).unit_vector())
+                .map(|_| unit_vector(Vec3::random_range(-1.0, 1.0)))
                 .collect();
             Self {
                 randvec,
@@ -486,27 +503,27 @@ This is still a bit blocky looking, probably because the min and max of the patt
                     }
                 }
             }
-            perlin_interp(c, u, v, w)
+            self.perlin_interp(c, u, v, w)
         }
-    }
 
-    fn perlin_interp(c: [[[Vec3; 2]; 2]; 2], u: f64, v: f64, w: f64) -> f64 {
-        let uu = u * u * (3.0 - 2.0 * u);
-        let vv = v * v * (3.0 - 2.0 * v);
-        let ww = w * w * (3.0 - 2.0 * w);
-        let mut accum = 0.0;
-        for i in 0..2 {
-            for j in 0..2 {
-                for k in 0..2 {
-                    let weight = Vec3::new(u - i as f64, v - j as f64, w - k as f64);
-                    accum += (i as f64 * uu + (1 - i) as f64 * (1.0 - uu))
-                        * (j as f64 * vv + (1 - j) as f64 * (1.0 - vv))
-                        * (k as f64 * ww + (1 - k) as f64 * (1.0 - ww))
-                        * c[i][j][k].dot(weight);
+        fn perlin_interp(&self, c: [[[Vec3; 2]; 2]; 2], u: f64, v: f64, w: f64) -> f64 {
+            let uu = u * u * (3.0 - 2.0 * u);
+            let vv = v * v * (3.0 - 2.0 * v);
+            let ww = w * w * (3.0 - 2.0 * w);
+            let mut accum = 0.0;
+            for i in 0..2 {
+                for j in 0..2 {
+                    for k in 0..2 {
+                        let weight = Vec3::new(u - i as f64, v - j as f64, w - k as f64);
+                        accum += (i as f64 * uu + (1 - i) as f64 * (1.0 - uu))
+                            * (j as f64 * vv + (1 - j) as f64 * (1.0 - vv))
+                            * (k as f64 * ww + (1 - k) as f64 * (1.0 - ww))
+                            * dot(c[i][j][k], weight);
+                    }
                 }
             }
+            accum
         }
-        accum
     }
     ```
   </Tab>
@@ -689,7 +706,7 @@ However, usually turbulence is used indirectly. For example, the "hello world" o
     ```rust filename="texture.rs | Marble-like noise texture"
     fn value(&self, _u: f64, _v: f64, p: &Point3) -> Color {
         let noise_val = 1.0 + (self.scale * p.z() + 10.0 * self.noise.turbulence(p, 7)).sin();
-        self.color * 0.5 * noise_val
+        Color::new(1.0, 1.0, 1.0) * 0.5 * noise_val
     }
     ```
   </Tab>
