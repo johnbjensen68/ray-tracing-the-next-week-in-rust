@@ -6,7 +6,7 @@ create a function that returns a box, by creating a `hittable_list` of six recta
 <Tabs>
   <Tab label="Rust">
     ```rust filename="quad.rs | A box object"
-    pub fn make_box(a: Point3, b: Point3, mat: Arc<dyn Material>) -> Arc<HittableList> {
+    pub fn make_box(a: Point3, b: Point3, mat: Rc<dyn Material>) -> Box<HittableList> {
         // Returns the 3D box (six sides) that contains the two opposite vertices a & b.
 
         let mut sides = HittableList::new();
@@ -19,14 +19,14 @@ create a function that returns a box, by creating a `hittable_list` of six recta
         let dy = Vec3::new(0.0, max.y() - min.y(), 0.0);
         let dz = Vec3::new(0.0, 0.0, max.z() - min.z());
 
-        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), max.z()),  dx,  dy, mat.clone()))); // front
-        sides.add(Arc::new(Quad::new(Point3::new(max.x(), min.y(), max.z()), -dz,  dy, mat.clone()))); // right
-        sides.add(Arc::new(Quad::new(Point3::new(max.x(), min.y(), min.z()), -dx,  dy, mat.clone()))); // back
-        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dz,  dy, mat.clone()))); // left
-        sides.add(Arc::new(Quad::new(Point3::new(min.x(), max.y(), max.z()),  dx, -dz, mat.clone()))); // top
-        sides.add(Arc::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dx,  dz, mat))); // bottom
+        sides.add(Box::new(Quad::new(Point3::new(min.x(), min.y(), max.z()),  dx,  dy, mat.clone()))); // front
+        sides.add(Box::new(Quad::new(Point3::new(max.x(), min.y(), max.z()), -dz,  dy, mat.clone()))); // right
+        sides.add(Box::new(Quad::new(Point3::new(max.x(), min.y(), min.z()), -dx,  dy, mat.clone()))); // back
+        sides.add(Box::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dz,  dy, mat.clone()))); // left
+        sides.add(Box::new(Quad::new(Point3::new(min.x(), max.y(), max.z()),  dx, -dz, mat.clone()))); // top
+        sides.add(Box::new(Quad::new(Point3::new(min.x(), min.y(), min.z()),  dx,  dz, mat))); // bottom
 
-        Arc::new(sides)
+        Box::new(sides)
     }
     ```
   </Tab>
@@ -74,7 +74,7 @@ Now we can add two blocks (but not rotated).
 <Tabs>
   <Tab label="Rust">
     ```rust filename="main.rs | Adding box objects"
-    fn cornell_box() -> HittableList {
+    fn cornell_box() {
         // ...
         world.add(make_box(Point3::new(130.0, 0.0,  65.0), Point3::new(295.0, 165.0, 230.0), white.clone()));
         world.add(make_box(Point3::new(265.0, 0.0, 295.0), Point3::new(430.0, 330.0, 460.0), white.clone()));
@@ -128,24 +128,24 @@ make this happen.
   <Tab label="Rust">
     ```rust filename="hittable.rs | Hittable translation hit function"
     pub struct Translate {
-        object: Arc<dyn Hittable>,
+        object: Box<dyn Hittable>,
         offset: Vec3,
     }
 
     impl Hittable for Translate {
-        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+        fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
             // Move the ray backwards by the offset
             let offset_r = Ray::new(r.origin() - self.offset, r.direction(), r.time());
 
             // Determine whether an intersection exists along the offset ray (and if so, where)
-            if !self.object.hit(&offset_r, ray_t, rec) {
-                return false;
-            }
+            let Some(mut rec) = self.object.hit(&offset_r, t_min, t_max) else {
+                return None;
+            };
 
             // Move the intersection point forwards by the offset
             rec.p += self.offset;
 
-            true
+            Some(rec)
         }
     }
     ```
@@ -185,20 +185,20 @@ make this happen.
   <Tab label="Rust">
     ```rust filename="hittable.rs | Hittable translation class"
     pub struct Translate {
-        object: Arc<dyn Hittable>,
+        object: Box<dyn Hittable>,
         offset: Vec3,
         bbox: Aabb,
     }
 
     impl Translate {
-        pub fn new(object: Arc<dyn Hittable>, offset: Vec3) -> Self {
+        pub fn new(object: Box<dyn Hittable>, offset: Vec3) -> Self {
             let bbox = object.bounding_box() + offset;
             Self { object, offset, bbox }
         }
     }
 
     impl Hittable for Translate {
-        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+        fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
             // ...
         }
 
@@ -385,7 +385,7 @@ We can now create a class for y-rotation. Let's tackle the hit function first:
   <Tab label="Rust">
     ```rust filename="hittable.rs | Hittable rotate-Y hit function"
     impl Hittable for RotateY {
-        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+        fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
 
             // Transform the ray from world space to object space.
 
@@ -404,10 +404,9 @@ We can now create a class for y-rotation. Let's tackle the hit function first:
             let rotated_r = Ray::new(origin, direction, r.time());
 
             // Determine whether an intersection exists in object space (and if so, where).
-
-            if !self.object.hit(&rotated_r, ray_t, rec) {
-                return false;
-            }
+            let Some(mut rec) = self.object.hit(&rotated_r, t_min, t_max) else {
+                return None;
+            };
 
             // Transform the intersection from object space back to world space.
 
@@ -423,7 +422,7 @@ We can now create a class for y-rotation. Let's tackle the hit function first:
                 (-self.sin_theta * rec.normal.x()) + (self.cos_theta * rec.normal.z()),
             );
 
-            true
+            Some(rec)
         }
     }
     ```
@@ -486,14 +485,14 @@ We can now create a class for y-rotation. Let's tackle the hit function first:
   <Tab label="Rust">
     ```rust filename="hittable.rs | Hittable rotate-Y class"
     pub struct RotateY {
-        object: Arc<dyn Hittable>,
+        object: Box<dyn Hittable>,
         sin_theta: f64,
         cos_theta: f64,
         bbox: Aabb,
     }
 
     impl RotateY {
-        pub fn new(object: Arc<dyn Hittable>, angle: f64) -> Self {
+        pub fn new(object: Box<dyn Hittable>, angle: f64) -> Self {
             let radians = angle.to_radians();
             let sin_theta = radians.sin();
             let cos_theta = radians.cos();
@@ -515,8 +514,8 @@ We can now create a class for y-rotation. Let's tackle the hit function first:
                         let tester = Vec3::new(newx, y, newz);
 
                         for c in 0..3 {
-                            min[c] = min[c].min(tester[c]);
-                            max[c] = max[c].max(tester[c]);
+                            min.set_index(c, min.get_index(c).min(tester.get_index(c)));
+                            max.set_index(c, max.get_index(c).max(tester.get_index(c)));
                         }
                     }
                 }
@@ -528,7 +527,7 @@ We can now create a class for y-rotation. Let's tackle the hit function first:
     }
 
     impl Hittable for RotateY {
-        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
+        fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
             // ...
         }
 
@@ -596,18 +595,18 @@ And the changes to Cornell are:
 <Tabs>
   <Tab label="Rust">
     ```rust filename="main.rs | Cornell scene with Y-rotated boxes"
-    fn cornell_box() -> HittableList {
+    fn cornell_box() {
         // ...
-        world.add(Arc::new(Quad::new(Point3::new(0.0,0.0,555.0), Vec3::new(555.0,0.0,0.0), Vec3::new(0.0,555.0,0.0), white.clone())));
+        world.add(Box::new(Quad::new(Point3::new(0.0,0.0,555.0), Vec3::new(555.0,0.0,0.0), Vec3::new(0.0,555.0,0.0), white.clone())));
 
-        let box1 = make_box(Point3::new(0.0,0.0,0.0), Point3::new(165.0,330.0,165.0), white.clone());
-        let box1: Arc<dyn Hittable> = Arc::new(RotateY::new(box1, 15.0));
-        let box1: Arc<dyn Hittable> = Arc::new(Translate::new(box1, Vec3::new(265.0, 0.0, 295.0)));
+        let box1: Box<HittableList> = make_box(Point3::new(0.0,0.0,0.0), Point3::new(165.0,330.0,165.0), white.clone());
+        let box1: Box<dyn Hittable> = Box::new(RotateY::new(box1, 15.0));
+        let box1: Box<dyn Hittable> = Box::new(Translate::new(box1, Vec3::new(265.0, 0.0, 295.0)));
         world.add(box1);
 
         let box2 = make_box(Point3::new(0.0,0.0,0.0), Point3::new(165.0,165.0,165.0), white.clone());
-        let box2: Arc<dyn Hittable> = Arc::new(RotateY::new(box2, -18.0));
-        let box2: Arc<dyn Hittable> = Arc::new(Translate::new(box2, Vec3::new(130.0, 0.0, 65.0)));
+        let box2: Box<dyn Hittable> = Box::new(RotateY::new(box2, -18.0));
+        let box2: Box<dyn Hittable> = Box::new(Translate::new(box2, Vec3::new(130.0, 0.0, 65.0)));
         world.add(box2);
         // ...
     }
