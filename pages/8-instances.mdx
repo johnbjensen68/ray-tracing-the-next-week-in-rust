@@ -73,7 +73,7 @@ Now we can add two blocks (but not rotated).
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Adding box objects"
+    ```rust {3-4} filename="main.rs | Adding box objects"
     fn cornell_box() {
         // ...
         world.add(make_box(Point3::new(130.0, 0.0,  65.0), Point3::new(295.0, 165.0, 230.0), white.clone()));
@@ -183,7 +183,7 @@ make this happen.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="hittable.rs | Hittable translation class"
+    ```rust {4,7-12,19} filename="hittable.rs | Hittable translation class"
     pub struct Translate {
         object: Box<dyn Hittable>,
         offset: Vec3,
@@ -594,7 +594,7 @@ And the changes to Cornell are:
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="main.rs | Cornell scene with Y-rotated boxes"
+    ```rust {6-7,11-12} filename="main.rs | Cornell scene with Y-rotated boxes"
     fn cornell_box() {
         // ...
         world.add(Box::new(Quad::new(Point3::new(0.0,0.0,555.0), Vec3::new(555.0,0.0,0.0), Vec3::new(0.0,555.0,0.0), white.clone())));
