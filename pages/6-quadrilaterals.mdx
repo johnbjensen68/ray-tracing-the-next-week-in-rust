@@ -360,7 +360,7 @@ our quadrilateral.
 
             let intersection = r.at(t);
 
-            let rec = HitRecord {
+            let mut rec = HitRecord {
                 t,
                 p: intersection,
                 mat: self.mat.clone(),
@@ -369,6 +369,7 @@ our quadrilateral.
                 u: 0.0,
                 v: 0.0,
             };
+            rec.set_face_normal(r, self.normal);
             Some(rec)
         }
     }
@@ -609,7 +610,7 @@ test method from the hit method.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust {17,19-23,32-33,41-53} filename="quad.rs | Final quad class"
+    ```rust {17,19-23,32-33,35,42-54} filename="quad.rs | Final quad class"
     impl Hittable for Quad {
         fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
             let ray_t = Interval::new(t_min, t_max);
@@ -635,7 +636,7 @@ test method from the hit method.
             let interior = Self::is_interior(alpha, beta)?;
 
             // Ray hits the 2D shape; build the hit record and return.
-            let rec = HitRecord {
+            let mut rec = HitRecord {
                 t,
                 p: intersection,
                 mat: self.mat.clone(),
@@ -644,6 +645,7 @@ test method from the hit method.
                 u: interior.0,
                 v: interior.1,
             };
+            rec.set_face_normal(r, self.normal);
             Some(rec)
         }
 
