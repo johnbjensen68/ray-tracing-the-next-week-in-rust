@@ -33,47 +33,43 @@ The resulting class is:
   <Tab label="Rust">
     ```rust filename="constant_medium.rs | Constant medium class"
     pub struct ConstantMedium {
-        boundary: Arc<dyn Hittable>,
+        boundary: Box<dyn Hittable>,
         neg_inv_density: f64,
-        phase_function: Arc<dyn Material>,
+        phase_function: Rc<dyn Material>,
     }
 
     impl ConstantMedium {
-        pub fn new(boundary: Arc<dyn Hittable>, density: f64, tex: Arc<dyn Texture>) -> Self {
+        pub fn new(boundary: Box<dyn Hittable>, density: f64, tex: Rc<dyn Texture>) -> Self {
             Self {
                 boundary,
                 neg_inv_density: -1.0 / density,
-                phase_function: Arc::new(Isotropic::new(tex)),
+                phase_function: Rc::new(Isotropic::new(tex)),
             }
         }
 
-        pub fn from_color(boundary: Arc<dyn Hittable>, density: f64, albedo: Color) -> Self {
+        pub fn from_color(boundary: Box<dyn Hittable>, density: f64, albedo: Color) -> Self {
             Self {
                 boundary,
                 neg_inv_density: -1.0 / density,
-                phase_function: Arc::new(Isotropic::from_color(albedo)),
+                phase_function: Rc::new(Isotropic::from_color(albedo)),
             }
         }
     }
 
     impl Hittable for ConstantMedium {
-        fn hit(&self, r: &Ray, ray_t: Interval, rec: &mut HitRecord) -> bool {
-            let mut rec1 = HitRecord::default();
-            let mut rec2 = HitRecord::default();
+        fn hit(&self, r: &Ray, t_min: f64, t_max: f64) -> Option<HitRecord> {
+            let Some(mut rec1) = self.boundary.hit(r, f64::NEG_INFINITY, f64::INFINITY) else {
+                return None;
+            };
+            let Some(mut rec2) = self.boundary.hit(r, rec1.t + 0.0001, f64::INFINITY) else {
+                return None;
+            };
 
-            if !self.boundary.hit(r, Interval::UNIVERSE, &mut rec1) {
-                return false;
-            }
-
-            if !self.boundary.hit(r, Interval::new(rec1.t + 0.0001, f64::INFINITY), &mut rec2) {
-                return false;
-            }
-
-            if rec1.t < ray_t.min { rec1.t = ray_t.min; }
-            if rec2.t > ray_t.max { rec2.t = ray_t.max; }
+            if rec1.t < t_min { rec1.t = t_min; }
+            if rec2.t > t_max { rec2.t = t_max; }
 
             if rec1.t >= rec2.t {
-                return false;
+                return None;
             }
 
             if rec1.t < 0.0 {
@@ -85,17 +81,19 @@ The resulting class is:
             let hit_distance = self.neg_inv_density * random_double().ln();
 
             if hit_distance > distance_inside_boundary {
-                return false;
+                return None;
             }
 
-            rec.t = rec1.t + hit_distance / ray_length;
-            rec.p = r.at(rec.t);
-
-            rec.normal = Vec3::new(1.0, 0.0, 0.0); // arbitrary
-            rec.front_face = true;                 // also arbitrary
-            rec.mat = self.phase_function.clone();
-
-            true
+            let t = rec1.t + hit_distance / ray_length;
+            Some(HitRecord {
+                t,
+                p: r.at(t),
+                normal: Vec3::new(1.0, 0.0, 0.0), // arbitrary
+                front_face: true,                 // also arbitrary
+                mat: self.phase_function.clone(),
+                u: 0.0,
+                v: 0.0,
+            })
         }
 
         fn bounding_box(&self) -> Aabb {
@@ -182,27 +180,25 @@ The scattering function of isotropic picks a uniform random direction:
   <Tab label="Rust">
     ```rust filename="material.rs | The isotropic class"
     pub struct Isotropic {
-        tex: Arc<dyn Texture>,
+        tex: Rc<dyn Texture>,
     }
 
     impl Isotropic {
-        pub fn new(tex: Arc<dyn Texture>) -> Self {
+        pub fn new(tex: Rc<dyn Texture>) -> Self {
             Self { tex }
         }
 
         pub fn from_color(albedo: Color) -> Self {
-            Self { tex: Arc::new(SolidColor::new(albedo)) }
+            Self { tex: Rc::new(SolidColor::new(albedo)) }
         }
     }
 
     impl Material for Isotropic {
-        fn scatter(
-            &self, r_in: &Ray, rec: &HitRecord,
-            attenuation: &mut Color, scattered: &mut Ray,
-        ) -> bool {
-            *scattered = Ray::new(rec.p, Vec3::random_unit_vector(), r_in.time());
-            *attenuation = self.tex.value(rec.u, rec.v, &rec.p);
-            true
+        fn scatter(&self, r_in: &Ray, rec: &HitRecord) -> Option<ScatterRecord> {
+            Some(ScatterRecord {
+                attenuation: self.tex.value(rec.u, rec.v, &rec.p),
+                scattered: Ray::new(rec.p, vec3::random_unit_vector(), r_in.time()),
+            })
         }
     }
     ```
@@ -249,33 +245,50 @@ bigger (and dimmer so it doesn't blow out the scene) for faster convergence:
 <Tabs>
   <Tab label="Rust">
     ```rust filename="main.rs | Cornell box, with smoke"
-    fn cornell_smoke() -> HittableList {
+    fn cornell_smoke() {
         let mut world = HittableList::new();
 
-        let red   = Arc::new(Lambertian::from_color(Color::new(0.65, 0.05, 0.05)));
-        let white = Arc::new(Lambertian::from_color(Color::new(0.73, 0.73, 0.73)));
-        let green = Arc::new(Lambertian::from_color(Color::new(0.12, 0.45, 0.15)));
-        let light = Arc::new(DiffuseLight::from_color(Color::new(7.0, 7.0, 7.0)));
+        let red   = Rc::new(Lambertian::new(Color::new(0.65, 0.05, 0.05)));
+        let white = Rc::new(Lambertian::new(Color::new(0.73, 0.73, 0.73)));
+        let green = Rc::new(Lambertian::new(Color::new(0.12, 0.45, 0.15)));
+        let light = Rc::new(DiffuseLight::from_color(Color::new(7.0, 7.0, 7.0)));
 
-        world.add(Arc::new(Quad::new(Point3::new(555.0,   0.0,   0.0), Vec3::new(  0.0, 555.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), green)));
-        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(  0.0, 555.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), red)));
-        world.add(Arc::new(Quad::new(Point3::new(113.0, 554.0, 127.0), Vec3::new(330.0,   0.0,   0.0), Vec3::new(  0.0,   0.0, 305.0), light)));
-        world.add(Arc::new(Quad::new(Point3::new(  0.0, 555.0,   0.0), Vec3::new(555.0,   0.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), white.clone())));
-        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(555.0,   0.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), white.clone())));
-        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0, 555.0), Vec3::new(555.0,   0.0,   0.0), Vec3::new(  0.0, 555.0,   0.0), white.clone())));
+        world.add(Box::new(Quad::new(Point3::new(555.0,   0.0,   0.0), Vec3::new(  0.0, 555.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), green)));
+        world.add(Box::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(  0.0, 555.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), red)));
+        world.add(Box::new(Quad::new(Point3::new(113.0, 554.0, 127.0), Vec3::new(330.0,   0.0,   0.0), Vec3::new(  0.0,   0.0, 305.0), light)));
+        world.add(Box::new(Quad::new(Point3::new(  0.0, 555.0,   0.0), Vec3::new(555.0,   0.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), white.clone())));
+        world.add(Box::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(555.0,   0.0,   0.0), Vec3::new(  0.0,   0.0, 555.0), white.clone())));
+        world.add(Box::new(Quad::new(Point3::new(  0.0,   0.0, 555.0), Vec3::new(555.0,   0.0,   0.0), Vec3::new(  0.0, 555.0,   0.0), white.clone())));
 
         let box1 = make_box(Point3::new(0.0,0.0,0.0), Point3::new(165.0,330.0,165.0), white.clone());
-        let box1: Arc<dyn Hittable> = Arc::new(RotateY::new(box1, 15.0));
-        let box1: Arc<dyn Hittable> = Arc::new(Translate::new(box1, Vec3::new(265.0, 0.0, 295.0)));
+        let box1: Box<dyn Hittable> = Box::new(RotateY::new(box1, 15.0));
+        let box1: Box<dyn Hittable> = Box::new(Translate::new(box1, Vec3::new(265.0, 0.0, 295.0)));
 
         let box2 = make_box(Point3::new(0.0,0.0,0.0), Point3::new(165.0,165.0,165.0), white.clone());
-        let box2: Arc<dyn Hittable> = Arc::new(RotateY::new(box2, -18.0));
-        let box2: Arc<dyn Hittable> = Arc::new(Translate::new(box2, Vec3::new(130.0, 0.0, 65.0)));
+        let box2: Box<dyn Hittable> = Box::new(RotateY::new(box2, -18.0));
+        let box2: Box<dyn Hittable> = Box::new(Translate::new(box2, Vec3::new(130.0, 0.0, 65.0)));
 
-        world.add(Arc::new(ConstantMedium::from_color(box1, 0.01, Color::new(0.0, 0.0, 0.0))));
-        world.add(Arc::new(ConstantMedium::from_color(box2, 0.01, Color::new(1.0, 1.0, 1.0))));
+        world.add(Box::new(ConstantMedium::from_color(box1, 0.01, Color::new(0.0, 0.0, 0.0))));
+        world.add(Box::new(ConstantMedium::from_color(box2, 0.01, Color::new(1.0, 1.0, 1.0))));
 
-        world
+        const IMAGE_WIDTH: usize = 600;
+        const SAMPLES_PER_PIXEL: i32 = 200;
+        const MAX_DEPTH: i32 = 50;
+        let cam = Camera::new(
+            IMAGE_WIDTH,
+            SAMPLES_PER_PIXEL,
+            MAX_DEPTH,
+            Point3::new(278.0, 278.0, -800.0),
+            Point3::new(278.0, 278.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            40.0,
+            1.0,
+            0.1,
+            10.0,
+            Color::new(0.0, 0.0, 0.0),
+        );
+
+        cam.render(&world);
     }
 
     fn main() {
@@ -287,21 +300,7 @@ bigger (and dimmer so it doesn't blow out the scene) for faster convergence:
             5 => quads(),
             6 => simple_light(),
             7 => cornell_box(),
-            8 => {
-                let world = cornell_smoke();
-                let mut cam = Camera::default();
-                cam.aspect_ratio      = 1.0;
-                cam.image_width       = 600;
-                cam.samples_per_pixel = 200;
-                cam.max_depth         = 50;
-                cam.background        = Color::new(0.0, 0.0, 0.0);
-                cam.vfov              = 40.0;
-                cam.lookfrom          = Point3::new(278.0, 278.0, -800.0);
-                cam.lookat            = Point3::new(278.0, 278.0, 0.0);
-                cam.vup               = Vec3::new(0.0, 1.0, 0.0);
-                cam.defocus_angle     = 0.0;
-                cam.render(&world);
-            }
+            8 => cornell_smoke(),
             _ => {}
         }
     }
