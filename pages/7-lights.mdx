@@ -15,25 +15,22 @@ the ray what color it is and performs no reflection. It's very simple:
   <Tab label="Rust">
     ```rust filename="material.rs | DiffuseLight"
     pub struct DiffuseLight {
-        emit: Arc<dyn Texture>,
+        emit: Rc<dyn Texture>,
     }
 
     impl DiffuseLight {
-        pub fn new(emit: Arc<dyn Texture>) -> Self {
+        pub fn new(emit: Rc<dyn Texture>) -> Self {
             Self { emit }
         }
 
         pub fn from_color(color: Color) -> Self {
-            Self { emit: Arc::new(SolidColor::new(color)) }
+            Self { emit: Rc::new(SolidColor::new(color)) }
         }
     }
 
     impl Material for DiffuseLight {
-        fn scatter(
-            &self, _r_in: &Ray, _rec: &HitRecord,
-            _attenuation: &mut Color, _scattered: &mut Ray,
-        ) -> bool {
-            false
+        fn scatter(&self, _r_in: &Ray, _rec: &HitRecord) -> Option<ScatterRecord> {
+            None
         }
 
         fn emitted(&self, u: f64, v: f64, p: &Point3) -> Color {
@@ -68,13 +65,8 @@ returns black:
 <Tabs>
   <Tab label="Rust">
     ```rust filename="material.rs | New emitted function in Material"
-    pub trait Material: Send + Sync {
-        fn scatter(
-            &self, r_in: &Ray, rec: &HitRecord,
-            attenuation: &mut Color, scattered: &mut Ray,
-        ) -> bool {
-            false
-        }
+    pub trait Material {
+        fn scatter(&self, r_in: &Ray, rec: &HitRecord) -> Option<ScatterRecord>;
 
         fn emitted(&self, _u: f64, _v: f64, _p: &Point3) -> Color {
             Color::new(0.0, 0.0, 0.0)
@@ -113,13 +105,40 @@ the new `color_from_emission` value.
 
 <Tabs>
   <Tab label="Rust">
-    ```rust filename="camera.rs | background field in Camera"
+    ```rust filename="camera.rs | background field and Camera::new parameter"
     pub struct Camera {
-        pub aspect_ratio: f64,
-        pub image_width: i32,
-        pub samples_per_pixel: i32,
-        pub max_depth: i32,
+        aspect_ratio: f64,
+        image_width: usize,
+        samples_per_pixel: i32,
+        max_depth: i32,
+        // ... (existing private camera fields) ...
         pub background: Color,
+    }
+
+    impl Camera {
+        pub fn new(
+            image_width: usize,
+            samples_per_pixel: i32,
+            max_depth: i32,
+            lookfrom: Point3,
+            lookat: Point3,
+            vup: Vec3,
+            vfov: f64,
+            aspect_ratio: f64,
+            aperture: f64,
+            focus_dist: f64,
+            background: Color,
+        ) -> Camera {
+            // ... (viewport and basis vectors as before) ...
+            Camera {
+                aspect_ratio,
+                image_width,
+                samples_per_pixel,
+                max_depth,
+                // ...
+                background,
+            }
+        }
         // ...
     }
     ```
@@ -145,22 +164,20 @@ the new `color_from_emission` value.
 <Tabs>
   <Tab label="Rust">
     ```rust filename="camera.rs | ray_color with background and emitting materials"
-    fn ray_color(r: &Ray, background: Color, world: &dyn Hittable, depth: i32) -> Color {
+    fn ray_color(&self, r: &Ray, background: Color, world: &dyn Hittable, depth: i32) -> Color {
         if depth <= 0 {
             return Color::new(0.0, 0.0, 0.0);
         }
-        let mut rec = HitRecord::default();
-        if !world.hit(r, Interval::new(0.001, f64::INFINITY), &mut rec) {
+        let Some(rec) = world.hit(r, 0.001, f64::INFINITY) else {
             return background;
-        }
+        };
         let color_from_emission = rec.mat.emitted(rec.u, rec.v, &rec.p);
-        let mut attenuation = Color::default();
-        let mut scattered = Ray::default();
-        if !rec.mat.scatter(r, &rec, &mut attenuation, &mut scattered) {
+
+        let Some(scatter_rec) = rec.mat.scatter(r, &rec) else {
             return color_from_emission;
-        }
+        };
         let color_from_scatter =
-            attenuation * ray_color(&scattered, background, world, depth - 1);
+            scatter_rec.attenuation * self.ray_color(&scatter_rec.scattered, background, world, depth - 1);
         color_from_emission + color_from_scatter
     }
     ```
@@ -201,38 +218,15 @@ the new `color_from_emission` value.
     ```rust filename="main.rs | Specifying new background color"
     fn bouncing_spheres() {
         // ...
-        let mut cam = Camera::default();
-        cam.aspect_ratio      = 16.0 / 9.0;
-        cam.image_width       = 400;
-        cam.samples_per_pixel = 100;
-        cam.max_depth         = 20;
-        cam.background        = Color::new(0.70, 0.80, 1.00);
-        // ...
+        let cam = Camera::new(
+            // ... (image and sampling settings, lookfrom/lookat/vup, vfov, aspect_ratio, aperture, focus_dist) ...
+            Color::new(0.70, 0.80, 1.00), // background
+        );
+        cam.render(&world);
     }
 
-    fn checkered_spheres() {
-        // ...
-        cam.background = Color::new(0.70, 0.80, 1.00);
-        // ...
-    }
-
-    fn earth() {
-        // ...
-        cam.background = Color::new(0.70, 0.80, 1.00);
-        // ...
-    }
-
-    fn perlin_spheres() {
-        // ...
-        cam.background = Color::new(0.70, 0.80, 1.00);
-        // ...
-    }
-
-    fn quads() {
-        // ...
-        cam.background = Color::new(0.70, 0.80, 1.00);
-        // ...
-    }
+    // checkered_spheres, earth, perlin_spheres, and quads each gain the same
+    // Color::new(0.70, 0.80, 1.00) as the last argument to Camera::new.
     ```
   </Tab>
 
@@ -291,28 +285,45 @@ If we set up a rectangle as a light:
 <Tabs>
   <Tab label="Rust">
     ```rust filename="main.rs | A simple rectangle light"
-    fn simple_light() -> HittableList {
+    fn simple_light() {
         let mut world = HittableList::new();
 
-        let pertext = Arc::new(NoiseTexture::new(4.0));
-        world.add(Arc::new(Sphere::new(
+        let pertext = Rc::new(NoiseTexture::new(4.0));
+        world.add(Box::new(Sphere::new(
             Point3::new(0.0, -1000.0, 0.0), 1000.0,
-            Arc::new(Lambertian::new(pertext.clone())),
+            Rc::new(Lambertian::from_texture(pertext.clone())),
         )));
-        world.add(Arc::new(Sphere::new(
+        world.add(Box::new(Sphere::new(
             Point3::new(0.0, 2.0, 0.0), 2.0,
-            Arc::new(Lambertian::new(pertext)),
+            Rc::new(Lambertian::from_texture(pertext)),
         )));
 
-        let difflight = Arc::new(DiffuseLight::from_color(Color::new(4.0, 4.0, 4.0)));
-        world.add(Arc::new(Quad::new(
+        let difflight = Rc::new(DiffuseLight::from_color(Color::new(4.0, 4.0, 4.0)));
+        world.add(Box::new(Quad::new(
             Point3::new(3.0, 1.0, -2.0),
             Vec3::new(2.0, 0.0, 0.0),
             Vec3::new(0.0, 2.0, 0.0),
             difflight,
         )));
 
-        world
+        const IMAGE_WIDTH: usize = 400;
+        const SAMPLES_PER_PIXEL: i32 = 100;
+        const MAX_DEPTH: i32 = 50;
+        let cam = Camera::new(
+            IMAGE_WIDTH,
+            SAMPLES_PER_PIXEL,
+            MAX_DEPTH,
+            Point3::new(26.0, 3.0, 6.0),
+            Point3::new(0.0, 2.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            20.0,
+            16.0 / 9.0,
+            0.1,
+            10.0,
+            Color::new(0.0, 0.0, 0.0),
+        );
+
+        cam.render(&world);
     }
 
     fn main() {
@@ -322,21 +333,7 @@ If we set up a rectangle as a light:
             3 => earth(),
             4 => perlin_spheres(),
             5 => quads(),
-            6 => {
-                let world = simple_light();
-                let mut cam = Camera::default();
-                cam.aspect_ratio      = 16.0 / 9.0;
-                cam.image_width       = 400;
-                cam.samples_per_pixel = 100;
-                cam.max_depth         = 50;
-                cam.background        = Color::new(0.0, 0.0, 0.0);
-                cam.vfov              = 20.0;
-                cam.lookfrom          = Point3::new(26.0, 3.0, 6.0);
-                cam.lookat            = Point3::new(0.0, 2.0, 0.0);
-                cam.vup               = Vec3::new(0.0, 1.0, 0.0);
-                cam.defocus_angle     = 0.0;
-                cam.render(&world);
-            }
+            6 => simple_light(),
             _ => {}
         }
     }
@@ -400,14 +397,14 @@ Fool around with making some spheres lights too.
 <Tabs>
   <Tab label="Rust">
     ```rust filename="main.rs | A simple rectangle light plus illuminating ball"
-    fn simple_light() -> HittableList {
+    fn simple_light() {
         // ...
-        let difflight = Arc::new(DiffuseLight::from_color(Color::new(4.0, 4.0, 4.0)));
-        world.add(Arc::new(Sphere::new(
+        let difflight = Rc::new(DiffuseLight::from_color(Color::new(4.0, 4.0, 4.0)));
+        world.add(Box::new(Sphere::new(
             Point3::new(0.0, 7.0, 0.0), 2.0,
             difflight.clone(),
         )));
-        world.add(Arc::new(Quad::new(
+        world.add(Box::new(Quad::new(
             Point3::new(3.0, 1.0, -2.0),
             Vec3::new(2.0, 0.0, 0.0),
             Vec3::new(0.0, 2.0, 0.0),
@@ -443,22 +440,39 @@ Let's make the 5 walls and the light of the box:
 <Tabs>
   <Tab label="Rust">
     ```rust filename="main.rs | Cornell box scene, empty"
-    fn cornell_box() -> HittableList {
+    fn cornell_box() {
         let mut world = HittableList::new();
 
-        let red   = Arc::new(Lambertian::from_color(Color::new(0.65, 0.05, 0.05)));
-        let white = Arc::new(Lambertian::from_color(Color::new(0.73, 0.73, 0.73)));
-        let green = Arc::new(Lambertian::from_color(Color::new(0.12, 0.45, 0.15)));
-        let light = Arc::new(DiffuseLight::from_color(Color::new(15.0, 15.0, 15.0)));
+        let red   = Rc::new(Lambertian::new(Color::new(0.65, 0.05, 0.05)));
+        let white = Rc::new(Lambertian::new(Color::new(0.73, 0.73, 0.73)));
+        let green = Rc::new(Lambertian::new(Color::new(0.12, 0.45, 0.15)));
+        let light = Rc::new(DiffuseLight::from_color(Color::new(15.0, 15.0, 15.0)));
 
-        world.add(Arc::new(Quad::new(Point3::new(555.0,   0.0,   0.0), Vec3::new(0.0, 555.0,   0.0), Vec3::new(  0.0, 0.0, 555.0), green)));
-        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(0.0, 555.0,   0.0), Vec3::new(  0.0, 0.0, 555.0), red)));
-        world.add(Arc::new(Quad::new(Point3::new(343.0, 554.0, 332.0), Vec3::new(-130.0, 0.0, 0.0), Vec3::new(  0.0, 0.0,-105.0), light)));
-        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(555.0,   0.0, 0.0), Vec3::new(  0.0, 0.0, 555.0), white.clone())));
-        world.add(Arc::new(Quad::new(Point3::new(555.0, 555.0, 555.0), Vec3::new(-555.0,  0.0, 0.0), Vec3::new(  0.0, 0.0,-555.0), white.clone())));
-        world.add(Arc::new(Quad::new(Point3::new(  0.0,   0.0, 555.0), Vec3::new(555.0,   0.0, 0.0), Vec3::new(  0.0, 555.0, 0.0), white.clone())));
+        world.add(Box::new(Quad::new(Point3::new(555.0,   0.0,   0.0), Vec3::new(0.0, 555.0,   0.0), Vec3::new(  0.0, 0.0, 555.0), green)));
+        world.add(Box::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(0.0, 555.0,   0.0), Vec3::new(  0.0, 0.0, 555.0), red)));
+        world.add(Box::new(Quad::new(Point3::new(343.0, 554.0, 332.0), Vec3::new(-130.0, 0.0, 0.0), Vec3::new(  0.0, 0.0,-105.0), light)));
+        world.add(Box::new(Quad::new(Point3::new(  0.0,   0.0,   0.0), Vec3::new(555.0,   0.0, 0.0), Vec3::new(  0.0, 0.0, 555.0), white.clone())));
+        world.add(Box::new(Quad::new(Point3::new(555.0, 555.0, 555.0), Vec3::new(-555.0,  0.0, 0.0), Vec3::new(  0.0, 0.0,-555.0), white.clone())));
+        world.add(Box::new(Quad::new(Point3::new(  0.0,   0.0, 555.0), Vec3::new(555.0,   0.0, 0.0), Vec3::new(  0.0, 555.0, 0.0), white.clone())));
 
-        world
+        const IMAGE_WIDTH: usize = 600;
+        const SAMPLES_PER_PIXEL: i32 = 200;
+        const MAX_DEPTH: i32 = 50;
+        let cam = Camera::new(
+            IMAGE_WIDTH,
+            SAMPLES_PER_PIXEL,
+            MAX_DEPTH,
+            Point3::new(278.0, 278.0, -800.0),
+            Point3::new(278.0, 278.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            40.0,
+            1.0,
+            0.1,
+            10.0,
+            Color::new(0.0, 0.0, 0.0),
+        );
+
+        cam.render(&world);
     }
 
     fn main() {
@@ -469,21 +483,7 @@ Let's make the 5 walls and the light of the box:
             4 => perlin_spheres(),
             5 => quads(),
             6 => simple_light(),
-            7 => {
-                let world = cornell_box();
-                let mut cam = Camera::default();
-                cam.aspect_ratio      = 1.0;
-                cam.image_width       = 600;
-                cam.samples_per_pixel = 200;
-                cam.max_depth         = 50;
-                cam.background        = Color::new(0.0, 0.0, 0.0);
-                cam.vfov              = 40.0;
-                cam.lookfrom          = Point3::new(278.0, 278.0, -800.0);
-                cam.lookat            = Point3::new(278.0, 278.0, 0.0);
-                cam.vup               = Vec3::new(0.0, 1.0, 0.0);
-                cam.defocus_angle     = 0.0;
-                cam.render(&world);
-            }
+            7 => cornell_box(),
             _ => {}
         }
     }
