@@ -18,6 +18,12 @@ This is a learning exercise for the author. The goal is to work through the seco
 
 The accompanying Rust source lives in a sibling repository (`code_for_next_week_in_rust`), and the listings in this site are kept in sync with that repo as the author works through each chapter.
 
+## How it was written
+
+This site is also an experiment in collaborative authoring with an AI coding assistant. The prose in the chapters, the alignment work that keeps each chapter in sync with the upstream book, the per-listing line highlights in the Rust tabs, the project's `CLAUDE.md`, and this README itself were largely drafted by [Claude Code](https://claude.com/claude-code) — Anthropic's command-line agent — running against the repo. The author wrote the underlying Rust source that the chapter listings track, made every design decision, reviewed each diff, and committed everything by hand. Where Claude was wrong or out of step, the author redirected; where it proposed something useful, the author kept it.
+
+So: the substance — what gets translated, how Rust idioms are chosen, which bugs are real — is the author's. The wording is largely Claude's. That trade-off is part of what's being tested.
+
 ## Running the site locally
 
 ```bash
