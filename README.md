@@ -18,6 +18,12 @@ This is a learning exercise for the author. The goal is to work through the seco
 
 The accompanying Rust source lives in a sibling repository, [code_for_next_week_in_rust](https://github.com/johnbjensen68/code_for_next_week_in_rust), and the listings in this site are kept in sync with that repo as the author works through each chapter.
 
+## Following along chapter by chapter
+
+The code repo organizes the book's progression with a branch per chapter: `chapter2`, `chapter3`, and so on. Each `chapterN` branch holds the state of the source *before* that chapter's changes are applied. So `chapter2` is the code as it stood at the end of *Ray Tracing in One Weekend* — the starting point for *The Next Week* — and `chapter3` is the state after chapter 2's work is committed, ready to start chapter 3, and so on.
+
+If you want to work through the whole book hands-on, clone the code repo, check out `chapter2`, and rebuild the source as you read each chapter on the site.
+
 ## How it was written
 
 This site is also an experiment in collaborative authoring with an AI coding assistant. The prose in the chapters, the alignment work that keeps each chapter in sync with the upstream book, the per-listing line highlights in the Rust tabs, the project's `CLAUDE.md`, and this README itself were largely drafted by [Claude Code](https://claude.com/claude-code) — Anthropic's command-line agent — running against the repo. The author wrote the underlying Rust source that the chapter listings track, made every design decision, reviewed each diff, and committed everything by hand. Where Claude was wrong or out of step, the author redirected; where it proposed something useful, the author kept it.
