@@ -16,7 +16,7 @@ Each chapter keeps the original narrative intact and presents the code in Rust a
 
 This is a learning exercise for the author. The goal is to work through the second book and translate each idea into idiomatic Rust — moving the rendering loop into the camera, swapping `shared_ptr` for `Rc`/`Box`, turning C++ output parameters into `Option<HitRecord>` and `Option<ScatterRecord>`, and so on — while keeping the book's narrative readable as a teaching text.
 
-The accompanying Rust source lives in a sibling repository (`code_for_next_week_in_rust`), and the listings in this site are kept in sync with that repo as the author works through each chapter.
+The accompanying Rust source lives in a sibling repository, [code_for_next_week_in_rust](https://github.com/johnbjensen68/code_for_next_week_in_rust), and the listings in this site are kept in sync with that repo as the author works through each chapter.
 
 ## How it was written
 
