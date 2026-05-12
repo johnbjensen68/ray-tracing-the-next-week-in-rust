@@ -6,7 +6,9 @@ The site is deployed at https://ray-tracing-the-next-week-in-rust.vercel.app/.
 
 ## What this is
 
-A follow-up to [The Ray Tracing Road to Rust](https://the-ray-tracing-road-to-rust.vercel.app/), which adapted the first book in the series (*Ray Tracing in One Weekend*) into Rust. Both the original books and this adaptation are released under [CC0](https://github.com/RayTracing/raytracing.github.io/blob/release/COPYING.txt).
+A direct follow-up to [The Ray Tracing Road to Rust](https://the-ray-tracing-road-to-rust.vercel.app/) by [Sheng Chou](https://github.com/chousheng), which adapted the first book in the series (*Ray Tracing in One Weekend*) into Rust. Both the original books and this adaptation are released under [CC0](https://github.com/RayTracing/raytracing.github.io/blob/release/COPYING.txt).
+
+**Nearly everything about how this site looks and works comes from Sheng Chou's project.** The structure, the Next.js + Nextra platform, the side-by-side Rust/C++ tab component, the styling, the chapter layout, the convention of treating the book's prose as the authoritative narrative and the Rust translation as an addition — all of it was established by *The Ray Tracing Road to Rust*. This repository starts from the same patterns and continues them into the second book. If you find anything well-designed on this site, the credit belongs to Sheng Chou; the author of this repo has mostly been carrying the same approach forward into new chapters.
 
 Each chapter keeps the original narrative intact and presents the code in Rust and C++ side-by-side using a tab switcher, so a reader can compare implementations without losing their place. The Rust translations live alongside the unchanged C++ listings rather than replacing them.
 
@@ -29,4 +31,8 @@ The site is a [Next.js 13](https://nextjs.org/) + [Nextra 2](https://nextra.site
 
 ## Acknowledgements
 
-All credit for the original book, the diagrams, and the rendered images goes to Peter Shirley, Trevor David Black, and Steve Hollasch. This adaptation only adds the Rust translations of the code listings and minor commentary about Rust-specific concerns.
+All credit for the original book, its narrative, the diagrams, and the rendered images goes to Peter Shirley, Trevor David Black, and Steve Hollasch.
+
+The site's entire shape — the platform, the components, the conventions for presenting Rust alongside C++, the chapter scaffolding — is borrowed from [The Ray Tracing Road to Rust](https://the-ray-tracing-road-to-rust.vercel.app/) by [Sheng Chou](https://github.com/chousheng). This adaptation is largely an extension of that work into the second book of the series; the design decisions that make it readable were made there, not here.
+
+What this repo adds on top of those two foundations is the Rust translation of the second book's code listings and short notes where Rust's ownership and trait system call for a different shape than the original C++.
